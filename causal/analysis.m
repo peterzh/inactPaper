@@ -152,6 +152,42 @@ cmap = [ linspace(0,1,100)' linspace(0,1,100)' ones(100,1);
     ones(100,1) linspace(1,0,100)' linspace(1,0,100)'];
 colormap(cmap);
 
+figure(301); set(301,'color','w')
+subplot(1,2,1); hold on;
+for q = 1:numel(coords) % coords is from ctxOutlines.mat
+    cx = coords(q).x/100 - 5.7;
+    cy = coords(q).y/100 - 5.4;
+    plot(cx,-cy, 'LineWidth', 0.5, 'Color', [1 1 1]*0.5, 'Tag', 'outline');
+end
+r = 2;
+%plot NS points as small dots
+idx = q1(r,:,1) < deltaProb(r,:) & deltaProb(r,:) < q1(r,:,2);
+h=scatter(coordSet(idx,1),coordSet(idx,2),20,deltaProb(r,idx),'o','filled'); axis equal;  drawnow;
+h.MarkerEdgeColor=[1 1 1]*0.75;
+
+%Plot *
+idx = deltaProb(r,:) < q1(r,:,1) |  q1(r,:,2) < deltaProb(r,:);
+h=scatter(coordSet(idx,1),coordSet(idx,2),100,deltaProb(r,idx),'o','filled'); axis equal;  drawnow;
+h.MarkerEdgeColor=[1 1 1]*0.75;
+
+%Plot **
+idx = deltaProb(r,:) < q2(r,:,1) |  q2(r,:,2) < deltaProb(r,:);
+h=scatter(coordSet(idx,1),coordSet(idx,2),200,deltaProb(r,idx),'o','filled'); axis equal;  drawnow;
+h.MarkerEdgeColor=[1 1 1]*0.75;
+
+%Plot ***
+idx = deltaProb(r,:) < q3(r,:,1) |  q3(r,:,2) < deltaProb(r,:);
+h=scatter(coordSet(idx,1),coordSet(idx,2),300,deltaProb(r,idx),'o','filled'); axis equal;  drawnow;
+h.MarkerEdgeColor=[1 1 1]*0.75;
+
+
+set(gca,'xtick','','ytick','','xcolor','w','ycolor','w','xlim',[-1 1]*5.2,'ylim',[-5 4]);
+cmap = [ linspace(0,1,100)' linspace(0,1,100)' ones(100,1);
+    ones(100,1) linspace(1,0,100)' linspace(1,0,100)'];
+colormap(cmap);
+colorbar; caxis([-1 1]*0.8);
+title('delta R on CL=CR');
+
 %% Get pulse experiment data
 clear all;
 
@@ -189,35 +225,82 @@ D.laserOnset = D.laserOnset + randn(length(D.laserOnset),1)/100000;
 [~,sortIdx]=sort(D.laserOnset);
 D = getrow(D, sortIdx);
 
+%Remove trials with pre-stimulus wheel movement
+D.keepIdx = zeros(size(D.response));
+for sess = 1:max(D.sessionID)
+    times = D.wheel_stimulusOn_timesteps(D.sessionID==sess,:);
+    times = times(1,:);
+    wheel = D.wheel_stimulusOn(D.sessionID==sess,:);
+    choice = D.response(D.sessionID==sess);
+    
+    %Whiten
+    wheel_whiten =  wheel/std(wheel(:,end));
+    
+    %Threshold
+    wheel_whiten_window = mean( abs(wheel_whiten(:,-0.150 < times & times < 0.05 & times ~= 0)) , 2);
+    D.keepIdx(D.sessionID==sess) = wheel_whiten_window < 0.05;
+end
+D = getrow(D, D.keepIdx==1);
+
 %get non-laser RT and performance
-E = getrow(D, (D.CR_gt_CL | D.CL_gt_CR) & D.laserType==0 );
-nonL = struct;
-nonL.perf = mean(E.feedbackType);
-nonL.RT = median(E.RT(E.feedbackType==1));
+NL =  getrow(D, (D.CR_gt_CL | D.CL_gt_CR) & D.laserType==0 );
+VIS = getrow(D, (D.laserRegion == 'LeftVIS' & D.CR_gt_CL) | (D.laserRegion == 'RightVIS' & D.CL_gt_CR) );
+M2 = getrow(D, (D.laserRegion == 'LeftM2' & D.CR_gt_CL) | (D.laserRegion == 'RightM2' & D.CL_gt_CR) );
 
+%% Sliding window performance and RT
 
-%% Compute the performance and RT on nonlaser trials
+window_sec = 0.1;
+alpha = 0.0001;
+
+% M2.RT(M2.laserOnset>0.1)=0.4;
+
 figure(301);
-subplot(2,1,1); hold on;
-E = getrow(D, (D.laserRegion == 'LeftVIS' & D.CR_gt_CL) | (D.laserRegion == 'RightVIS' & D.CL_gt_CR) );
-fb_smooth = smoothdata(E.feedbackType,'movmean',0.1,'SamplePoints',E.laserOnset);
-plot(E.laserOnset,fb_smooth);
-rt_smooth = smoothdata(E.RT(E.feedbackType==1),'movmedian',0.1,'SamplePoints',E.laserOnset(E.feedbackType==1));
-subplot(2,1,2); hold on;
-plot(E.laserOnset(E.feedbackType==1),rt_smooth);
-
-subplot(2,1,1); hold on;
-E = getrow(D, (D.laserRegion == 'LeftM2' & D.CR_gt_CL) | (D.laserRegion == 'RightM2' & D.CL_gt_CR) );
-fb_smooth = smoothdata(E.feedbackType,'movmean',0.1,'SamplePoints',E.laserOnset);
-plot(E.laserOnset,fb_smooth); xlim([-0.3 0.3])
-rt_smooth = smoothdata(E.RT(E.feedbackType==1),'movmedian',0.1,'SamplePoints',E.laserOnset(E.feedbackType==1));
-subplot(2,1,2); hold on;
-plot(E.laserOnset(E.feedbackType==1),rt_smooth); xlim([-0.3 0.3])
-
-subplot(2,1,1); hold on;
-line([-1 1]*0.3, [1 1]*nonL.perf,'Color',[0 0 0])
-subplot(2,1,2); hold on;
-line([-1 1]*0.3, [1 1]*nonL.RT,'Color',[0 0 0])
-linkaxes(get(gcf,'children'),'x')
+subplot(2,2,2); hold on; line([-1 1]*0.3, [1 1]*mean(NL.feedbackType),'Color',[0 0 0])
+subplot(2,2,4); hold on; line([-1 1]*0.3, [1 1]*median(NL.RT(NL.feedbackType==1)),'Color',[0 0 0])
 
 
+tsteps = linspace(-0.3,0.3,1000);
+perf = nan(2,1000);
+rt = nan(2,1000);
+for t = 1:length(tsteps)
+%     %VIS
+    idx = WithinRanges(VIS.laserOnset, tsteps(t) + [-0.5 0.5]*window_sec);
+    [counts,~,pVal] = crosstab( [NL.feedbackType; VIS.feedbackType(idx==1)], [NL.laserType; VIS.laserType(idx==1)]);
+    prob = counts./sum(counts,1);
+    perf(1,t) = prob(2,2);
+    if pVal<alpha
+        subplot(2,2,2);
+        plot(tsteps(t), 0.8,'bo');
+    end
+    
+    pVal = ranksum( NL.RT(NL.feedbackType==1), VIS.RT(idx & VIS.feedbackType==1), 'tail', 'left');
+    rt(1,t) = median( VIS.RT(idx & VIS.feedbackType==1) );
+    if pVal<alpha
+        subplot(2,2,4);
+        plot(tsteps(t), 0.31,'bo');
+    end
+    
+    %M2
+    idx = WithinRanges(M2.laserOnset, tsteps(t) + [-0.5 0.5]*window_sec);
+    [counts,~,pVal] = crosstab( [NL.feedbackType; M2.feedbackType(idx==1)], [NL.laserType; M2.laserType(idx==1)]);
+    prob = counts./sum(counts,1);
+    perf(2,t) = prob(2,2);
+    if pVal<alpha
+        subplot(2,2,2);
+        plot(tsteps(t), 0.7,'ro');
+    end
+    
+    pVal = ranksum( NL.RT(NL.feedbackType==1), M2.RT(idx & M2.feedbackType==1), 'tail', 'left' );
+    rt(2,t) = median( M2.RT(idx & M2.feedbackType==1) );
+    if pVal<alpha
+        subplot(2,2,4);
+        plot(tsteps(t), 0.3,'ro');
+    end
+    
+end
+
+subplot(2,2,2);
+plot(tsteps, perf); xlim([-1 1]*0.3); xlabel('Stim onset'); ylabel('Performance');
+
+subplot(2,2,4);
+plot(tsteps,rt); xlim([-1 1]*0.3); xlabel('Stim onset'); ylabel('Median RT');
