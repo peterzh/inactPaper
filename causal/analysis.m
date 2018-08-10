@@ -304,3 +304,203 @@ plot(tsteps, perf); xlim([-1 1]*0.3); xlabel('Stim onset'); ylabel('Performance'
 
 subplot(2,2,4);
 plot(tsteps,rt); xlim([-1 1]*0.3); xlabel('Stim onset'); ylabel('Median RT');
+
+%% Get multi-power inactivation data
+clear all;
+expRefs = readtable('./sessionList_unilateral_multiple_powers.csv','FileType','text','Delimiter',',');
+expRefs = expRefs.expRef;
+mouseName = cellfun(@(e)e{3},cellfun(@(s) strsplit(s,'_'), expRefs,'uni',0),'uni',0);
+[names,~,subjID] = unique(mouseName);
+
+D = struct;
+ii=1;
+for session = 1:length(expRefs)
+    dd = loadData(expRefs{session});
+    dd = structfun(@(x)(x(6:(end-14),:)),dd,'uni',0); %trim first 5 trials and last 15
+    dd.sessionID = ones(length(dd.response),1)*ii;
+    dd.subjectID = ones(length(dd.response),1)*subjID(session);
+    
+    %Add extra inactivation labels
+    dd.laserRegion(dd.laserCoord(:,1)==0.5 & dd.laserCoord(:,2)==-2) = 'RightRSP';
+    dd.laserRegion(dd.laserCoord(:,1)==-0.5 & dd.laserCoord(:,2)==-2) = 'LeftRSP';
+    dd.laserRegion(dd.laserCoord(:,1)==-3.5 & dd.laserCoord(:,2)==-0.5) = 'LeftS1';
+    dd.laserRegion(dd.laserCoord(:,1)==3.5 & dd.laserCoord(:,2)==-0.5) = 'RightS1';
+    dd.laserRegion(dd.laserCoord(:,1)==1 & dd.laserCoord(:,2)==-0.5) = 'RightM1';
+    dd.laserRegion(dd.laserCoord(:,1)==-1 & dd.laserCoord(:,2)==-0.5) = 'LeftM1';
+    
+    if any(dd.laserType>0)
+        D = addstruct(D,dd);
+        ii=ii+1;
+    end
+end
+D = getrow(D,D.repeatNum==1);
+
+coordSet = unique(D.laserCoord(D.laserType==1,:),'rows');
+D.laserIdx = zeros(size(D.response));
+%Define laser Idx
+for i = 1:size(coordSet,1)
+    id = D.laserCoord(:,1) == coordSet(i,1) & D.laserCoord(:,2) == coordSet(i,2);
+    D.laserIdx(id) = i;
+end
+
+%Remove trials with pre-stimulus wheel movement
+D.keepIdx = zeros(size(D.response));
+for sess = 1:max(D.sessionID)
+    times = D.wheel_stimulusOn_timesteps(D.sessionID==sess,:);
+    times = times(1,:);
+    wheel = D.wheel_stimulusOn(D.sessionID==sess,:);
+    choice = D.response(D.sessionID==sess);
+    
+    %Whiten
+    wheel_whiten =  wheel/std(wheel(:,end));
+    
+    %Threshold
+    wheel_whiten_window = mean( abs(wheel_whiten(:,-0.150 < times & times < 0.05 & times ~= 0)) , 2);
+    D.keepIdx(D.sessionID==sess) = wheel_whiten_window < 0.05;
+end
+D = getrow(D, D.keepIdx==1);
+
+%% Fit multi-level model, or load previous fit already
+perturbationRegion = {'LeftVIS','RightVIS','LeftM2','RightM2','LeftM1','RightM1','LeftS1','RightS1'};
+D1 = getrow(D, any(D.laserRegion == perturbationRegion,2) | D.laserType==0);
+dat = struct('contrastLeft', D1.stimulus(:,1),...
+              'contrastRight', D1.stimulus(:,2),...
+              'choice', D1.response,...
+              'sessionID', D1.sessionID,...
+              'subjectID', D1.subjectID);
+dat.perturbation = zeros(size(dat.choice));
+for p = 1:length(perturbationRegion)
+    dat.perturbation(D1.laserRegion == perturbationRegion{p}) = p;
+end
+fit = bfit.fitModel('Two-Level-Perturbation',dat);
+
+% fit=load("C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\2018-06-21_1703_Two-Level-Perturbation.mat");
+fit=load("C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\Two-level_removed_pre_stim_movement_trials.mat");
+
+%% Plot multi-level 
+% areaCols = [ 0 0 1;
+%              0 0 0.5;
+%              0 1 0;
+%              0 0.5 0;
+%              1 0 0;
+%              0.5 0 0;
+%              1 1 0;
+%              0.5 0.5 0];
+
+areaCols = [ 73 148 208;
+                141 179 206
+                119 172 66;
+             147 170 119]/255;
+
+
+figure(401);
+
+ha_B=subplot(2,4,7); %Bias perturbation 
+ha_S=subplot(2,4,8); %Bias perturbation 
+hold(ha_B,'on'); hold(ha_S,'on');
+
+for p = 1:4
+%     plot(fit.posterior.delta(:,1,p), fit.posterior.delta(:,2,p), 'k.');
+    
+    mu = mean([fit.posterior.delta(:,1,p), fit.posterior.delta(:,2,p)],1);
+    Sigma = cov([fit.posterior.delta(:,1,p), fit.posterior.delta(:,2,p)]);
+    x1 = (mu(1) - 10*max(diag(Sigma))):0.01:(mu(1) + 10*max(diag(Sigma)));
+    x2 = (mu(2) - 10*max(diag(Sigma))):0.01:(mu(2) + 10*max(diag(Sigma)));
+    [X1,X2] = meshgrid(x1,x2);
+    F = mvnpdf([X1(:) X2(:)],mu,Sigma);
+    F = reshape(F,length(x2),length(x1));
+    [c1,c2]=contour(ha_B,x1,x2,F,8);
+    c2.LineColor = areaCols(p,:);
+    c2.LineWidth=1;
+end
+set(ha_B,'dataaspectratio',[1 1 1]);
+line(ha_B,[0 0],ylim(ha_B)); line(ha_B,xlim(ha_B),[0 0]);
+xlabel(ha_B,'\Delta b_L'); ylabel(ha_B,'\Delta b_R');
+
+
+for p = 1:4
+%     plot(fit.posterior.delta(:,3,p), fit.posterior.delta(:,4,p), 'k.');
+    
+    mu = mean([fit.posterior.delta(:,3,p), fit.posterior.delta(:,4,p)],1);
+    Sigma = cov([fit.posterior.delta(:,3,p), fit.posterior.delta(:,4,p)]);
+    x1 = (mu(1) - 10*max(diag(Sigma))):0.01:(mu(1) + 10*max(diag(Sigma)));
+    x2 = (mu(2) - 10*max(diag(Sigma))):0.01:(mu(2) + 10*max(diag(Sigma)));
+    [X1,X2] = meshgrid(x1,x2);
+    F = mvnpdf([X1(:) X2(:)],mu,Sigma);
+    F = reshape(F,length(x2),length(x1));
+    [c1,c2]=contour(ha_S,x1,x2,F,8);
+    c2.LineColor = areaCols(p,:);
+    c2.LineWidth=1;
+end
+set(ha_S,'dataaspectratio',[1 1 1]);
+line(ha_S,[0 0],ylim(ha_S)); line(ha_S,xlim(ha_S),[0 0]);
+xlabel(ha_S,'\Delta s_L'); ylabel(ha_S,'\Delta s_R');
+
+
+CL = [linspace(1,0.1,200), linspace(0.1,0,400), zeros(1,600)];
+CR = [zeros(1,600), linspace(0,0.1,400) linspace(0.1,1,200)];
+%Non-laser global fit on detection trials
+BL = fit.posterior.bias(:,1) ;
+BR = fit.posterior.bias(:,2);
+SL = fit.posterior.sens(:,1);
+SR = fit.posterior.sens(:,2);
+N = fit.posterior.n_exp;
+NL_ph=bplot.CN(BL,SL,BR,SR,N,CL,CR);
+NL_phM=mean(NL_ph,1);
+NL_phQ=quantile(NL_ph,[0.025 0.975],1);
+
+%non-laser detection trial data
+idx=min([fit.data.contrastLeft fit.data.contrastRight],[],2)==0;
+cDiff = fit.data.contrastRight(idx) - fit.data.contrastLeft(idx);
+resp = fit.data.choice(idx);
+perturb = fit.data.perturbation(idx);
+sess = fit.data.sessionID(idx);
+[counts,~,~,lab] = crosstab(cDiff,resp,perturb,sess);
+prob = counts./sum(counts,2);%Convert to probability over choices
+prob = nanmean(prob,4); %Average over sessions
+cDiffUnique=cellfun(@str2num,lab(1:size(prob,1),1));
+
+ha = tight_subplot(4,3,0.01,0.05,[0.05 0.5]);
+ii=1;
+for region = [1 3 2 4]
+    %Global fit
+    BL = fit.posterior.bias(:,1) + fit.posterior.delta(:,1,region);
+    BR = fit.posterior.bias(:,2) + fit.posterior.delta(:,2,region);
+    SL = fit.posterior.sens(:,1) + fit.posterior.delta(:,3,region);
+    SR = fit.posterior.sens(:,2) + fit.posterior.delta(:,4,region);
+    N = fit.posterior.n_exp;
+    
+    ph=bplot.CN(BL,SL,BR,SR,N,CL,CR);
+    phM=mean(ph,1);
+    phQ=quantile(ph,[0.025 0.975],1);
+    
+    phDiff = ph-NL_ph;
+    phDiffM=mean(phDiff,1);
+    phDiffQ=quantile(phDiff,[0.025 0.975],1);
+    
+    jj=1;
+    for r = [1 3 2]
+        hold( ha(3*(ii-1) + jj), 'on');
+        fx = fill(ha(3*(ii-1) + jj),[CR-CL fliplr(CR-CL)], [NL_phQ(1,:,r) fliplr( NL_phQ(2,:,r) ) ], 'k');
+        fx.FaceAlpha=0.3; fx.EdgeAlpha=0;
+        plot(ha(3*(ii-1) + jj), CR-CL,NL_phM(1,:,r),'k-', 'linewidth', 1);
+        
+        fx = fill(ha(3*(ii-1) + jj),[CR-CL fliplr(CR-CL)], [phQ(1,:,r) fliplr( phQ(2,:,r) ) ], 'r');
+        fx.FaceAlpha=0.3; fx.EdgeAlpha=0; fx.FaceColor = areaCols(region,:);
+        plot(ha(3*(ii-1) + jj),CR-CL,phM(1,:,r),'-','Color',areaCols(region,:), 'linewidth', 1);
+        
+        plot(ha(3*(ii-1) + jj),cDiffUnique,prob(:,r,1),'k.','markersize',20);
+        plot(ha(3*(ii-1) + jj),cDiffUnique,prob(:,r,1+region),'.','markersize',20,'Color',areaCols(region,:));
+        
+        jj = jj + 1;
+    end
+    
+    ii = ii + 1;
+end
+set([ha],'xcolor','none','ycolor','none');
+set([ha(end-2)],'ycolor','k','xcolor','k','xticklabelmode','auto','yticklabelmode','auto')
+set(ha,'ylim',[0 1],'xlim',[-1 1]);
+title(ha(1),'pLeft');
+title(ha(2),'pNoGo');
+title(ha(3),'pRight');
+set(ha,'dataaspectratio',[1.5 1 1]);

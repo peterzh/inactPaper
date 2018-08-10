@@ -2,7 +2,7 @@ SESSIONID = 17; %Session to view examples
 
 
 %%
-sessionList = readtable('../sessionList.csv','FileType','text','Delimiter',',');
+sessionList = readtable('./sessionList.csv','FileType','text','Delimiter',',');
 areaCols = [      0    0.4470    0.7410; %blue
     0.3010    0.7450    0.9330; %lightblue
     0.4660    0.6740    0.1880; %green
@@ -36,7 +36,7 @@ for sess = 1:height(sessionList)
     eRef = sessionList.expRef{sess};
     fprintf('Session %d %s\n',sess,eRef);
     
-    wfFile = [ '../preproc/WF_SVD/' eRef '.mat'];
+    wfFile = [ './preproc/WF_SVD/' eRef '.mat'];
     
     if ~exist(wfFile,'file')
         corrPath = fullfile(sessionList.widefieldDir{sess}, 'svdTemporalComponents_corr.npy');
@@ -45,7 +45,7 @@ for sess = 1:height(sessionList)
         end
         [U,V,wfTime,meanImg]=quickLoadUVt(sessionList.widefieldDir{sess},num_svd_components);
         
-        save([ '../preproc/widefield/' eRef '.mat'],'U','V','wfTime','meanImg');
+        save([ './preproc/widefield/' eRef '.mat'],'U','V','wfTime','meanImg');
     end
     
 end
@@ -55,13 +55,13 @@ for sess = 1:height(sessionList)
     eRef = sessionList.expRef{sess};
     fprintf('Session %d %s\n',sess,eRef);
     
-    preprocFile = [ '../preproc/WF_ROI/' eRef '.mat'];
+    preprocFile = [ './preproc/WF_ROI/' eRef '.mat'];
     
     if ~exist(preprocFile,'file') & ~isnan(sessionList.row_VISp(sess))
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         %%%%%% Load widefield data %%%%%%%%%%%
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        wf = [ '../preproc/WF_SVD/' eRef '.mat'];
+        wf = [ './preproc/WF_SVD/' eRef '.mat'];
         load(wf,'U','V','wfTime','meanImg');
         
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -69,9 +69,16 @@ for sess = 1:height(sessionList)
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         [U_dff, V_dff] = dffFromSVD(U, V, meanImg);
         
-        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        %%%%%% Compute derivative of dF/F %%%%%%%%%%%
-        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% % % % %         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% % % % %         %%%%%% Try deconvolution?  %%%%%%%%%%%
+% % % % %         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% % % % %         lam = 0;
+% % % % %         mtau = ??? %sensor timescale in samples
+% % % % %         g = exp(-1/mtau);
+% % % % %         oasisAR1()
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        %%%%%% Compute derivative of dF/F %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         d = designfilt('differentiatorfir','FilterOrder',50, ...
             'PassbandFrequency',8.5,'StopbandFrequency',10, ...
             'SampleRate',1/mean(diff(wfTime)));
@@ -204,10 +211,10 @@ end
 %% 0) Load and prepare data for the example session
 eRef = sessionList.expRef{SESSIONID};
 fprintf('Session %d %s\n',SESSIONID,eRef);
-load([ '../preproc/WF_ROI/' eRef '.mat'],'eRef','px','wfTime_dt','U_dff','dV','meanImg','mon','trial','timings','inclTrials');
-load([ '../preproc/WF_mask/' eRef '.mat'],'mask');
-load([ '../preproc/bregma/' eRef '_bregma.mat'],'bregma_AP','bregma_ML','lambda_AP','lambda_ML');
-load([ '../preproc/WF_aligned/' eRef '.mat'],'winSamps','avgStimAlign','contraLatency','label','px');
+load([ './preproc/WF_ROI/' eRef '.mat'],'eRef','px','wfTime_dt','U_dff','dV','meanImg','mon','trial','timings','inclTrials');
+load([ './preproc/WF_mask/' eRef '.mat'],'mask');
+load([ './preproc/bregma/' eRef '_bregma.mat'],'bregma_AP','bregma_ML','lambda_AP','lambda_ML');
+load([ './preproc/WF_aligned/' eRef '.mat'],'winSamps','avgStimAlign','contraLatency','label','px');
 
 disp('Data loaded');
 
@@ -313,12 +320,17 @@ mice={'Chain','Radnitz','Cori','Reichstein','Hench'};
 
 figure(101);
 ContraOnsetTime = nan(height(sessionList),5);
+rt_vals = cell(height(sessionList),1);
 for sess = 1:height(sessionList)
     eRef = sessionList.expRef{sess};
     fprintf('Session %d %s\n',sess,eRef);
     try
-    load([ '../preproc/WF_aligned/' eRef '.mat'],'contraLatency');
-    ContraOnsetTime(sess,:) = contraLatency';
+        load([ './preproc/WF_aligned/' eRef '.mat'],'contraLatency');
+        load([ './preproc/WF_ROI/' eRef '.mat'],'mon','trial','timings','inclTrials');
+        ContraOnsetTime(sess,:) = contraLatency';
+        
+        rt = [mon-timings.t_stimOn];
+        rt_vals{sess} = rt(inclTrials);
     catch
     end
 end
@@ -332,6 +344,7 @@ allMeansAx=gobjects;
 for m = 1:length(mice)
     mIdx = strcmp(sessionList.mouseName,mice(m));
     lat = ContraOnsetTime(mIdx,:);
+    rts_subj = cat(1,rt_vals{mIdx});
     
     for p =1:5
         m1=mean(lat(:,p));
@@ -351,9 +364,15 @@ for m = 1:length(mice)
         %         allMeans(m,p) = m1;
     end
     
+    %now add reaction time distribution
+    rt_stats = quantile(rts_subj, [0.25 0.5 0.75]);
+    
+    line(ha(1), rt_stats([1,3]), [1 1]*Y_jitter(m), 'Color', 'k');
+    plot(ha(1), rt_stats(2), Y_jitter(m), 'k.', 'markersize',15);
+    
 end
 
-xlim(ha,[0 0.2]);
+xlim(ha,[0 0.3]);
 xlabel(ha(1),'Stim onset');
 set(ha,'ytick',Y_jitter,'YTickLabel',mice,'XTickLabelMode','auto');
 ylim(ha,[-0.3 0.3]);
@@ -366,15 +385,15 @@ for sess = 1:height(sessionList)
     eRef = sessionList.expRef{sess};
     fprintf('Session %d %s\n',sess,eRef);
     
-    preprocFile = [ '../preproc/WF_ROI/' eRef '.mat'];
+    preprocFile = [ './preproc/WF_ROI/' eRef '.mat'];
     
     if exist(preprocFile,'file')
         load(preprocFile,'px');
-        load([ '../preproc/bregma/' eRef '_bregma.mat'],'bregma_AP','bregma_ML','lambda_AP','lambda_ML');
-        load([ '../preproc/WF_mask/' eRef '.mat'],'mask');
+        load([ './preproc/bregma/' eRef '_bregma.mat'],'bregma_AP','bregma_ML','lambda_AP','lambda_ML');
+        load([ './preproc/WF_mask/' eRef '.mat'],'mask');
         
         %Plot ROI
-        load([ '../preproc/WF_SVD/' eRef '.mat'],'meanImg');
+        load([ './preproc/WF_SVD/' eRef '.mat'],'meanImg');
         imagesc(haROI(sess),meanImg); colormap(haROI(sess),'gray');
         addAllenCtxOutlines([bregma_AP bregma_ML], [lambda_AP lambda_ML], [1 1 1]*0.5, haROI(sess))
         
@@ -397,8 +416,8 @@ for sess = 1:height(sessionList)
     eRef = sessionList.expRef{sess};
     fprintf('Session %d %s\n',sess,eRef);
     
-    preprocFile = [ '../preproc/WF_ROI/' eRef '.mat'];
-    maskFile = [ '../preproc/WF_mask/' eRef '.mat'];
+    preprocFile = [ './preproc/WF_ROI/' eRef '.mat'];
+    maskFile = [ './preproc/WF_mask/' eRef '.mat'];
     if exist(preprocFile,'file')
         
         %Plot ROI
@@ -424,8 +443,8 @@ for sess = 1:height(sessionList)
     eRef = sessionList.expRef{sess};
     fprintf('Session %d %s\n',sess,eRef);
     
-    preprocFile = [ '../preproc/WF_ROI/' eRef '.mat'];
-    bregmaFile = [ '../preproc/bregma/' eRef '_bregma.mat'];
+    preprocFile = [ './preproc/WF_ROI/' eRef '.mat'];
+    bregmaFile = [ './preproc/bregma/' eRef '_bregma.mat'];
     
     if exist(preprocFile,'file')
         load(preprocFile,'px');
@@ -492,7 +511,7 @@ for sess = 1:height(sessionList)
     end
 end
 
-%% Plot sequence at contralateral contrast
+%% OLD: Plot sequence at contralateral contrast
 figureContraTrace = figure('color','w','name','Sequence to CONTRALATERAL stimulus');
 haContraTrace = tight_subplot(5,8,0.03,[0.01 0.05],[0.05 0.01]);
 figureIpsiTrace = figure('color','w','name','Sequence to IPSILATERAL stimulus');
@@ -503,7 +522,7 @@ for sess = 1:height(sessionList)
     eRef = sessionList.expRef{sess};
     fprintf('Session %d %s\n',sess,eRef);
     
-    preprocFile = [ '../preproc/WF_ROI/' eRef '.mat'];
+    preprocFile = [ './preproc/WF_ROI/' eRef '.mat'];
     
     if exist(preprocFile,'file')
         %         load(preprocFile,'px','winSamps','thisTraces','avgStimAlign','CR_minus_CL');
@@ -607,3 +626,21 @@ xlabel(ha(1),'Stim onset');
 set(ha,'ytick',Y_jitter,'YTickLabel',mice,'XTickLabelMode','auto');
 ylim(ha,[-0.35 0.25]);
 legend(allMeansAx(1,:),{px.name});
+
+%% MISC: Plot RT histograms
+
+figureROILocations = figure('color','w','name','RT');
+ha = tight_subplot(5,8,0.04,[0.01 0.05],[0.05 0.01]);
+
+for sess = 1:height(sessionList)
+    eRef = sessionList.expRef{sess};
+    fprintf('Session %d %s\n',sess,eRef);
+    
+    preprocFile = [ './preproc/WF_ROI/' eRef '.mat'];
+    if exist(preprocFile,'file')
+        load([ './preproc/WF_ROI/' eRef '.mat'],'mon','trial','timings','inclTrials');
+        rt = [mon-timings.t_stimOn]';
+        
+        histogram(ha(sess),rt(inclTrials), 100)
+    end
+end
