@@ -10,18 +10,6 @@ areaCols = [      0    0.4470    0.7410; %blue
     0.4940    0.1840    0.5560; %purple
     0.8 0.8 0.8]; %grey
 
-cDiffCols = [1 0 0 1;
-    1 0 0 0.66;
-    1 0 0 0.33;
-    0 0 0 0.33;
-    0 0 1 0.33;
-    0 0 1 0.66;
-    0 0 1 1];
-
-contrastCols = [1 0 0; 0 0 0; 0 0 1];
-
-responseCols = copper(3);
-
 %% PREPROC: Behavioural data
 for sess = 1:height(sessionList)
     eRef = sessionList.expRef{sess};
@@ -294,49 +282,48 @@ for sess = 1:height(sessionList)
         mask = imgaussfilt(double(mask),3);
         f.delete;
         
+        %Identify good trials to include in averaging
+        isGoodPerformance = b.trial.repNum==1;
+        isGoodWheelMove = b.trial.choice==3 | isnan(b.trial.reactionTime_better) | (b.trial.reactionTime_better>0.125 & b.trial.reactionTime_better<0.5);
+        inclTrials = isGoodWheelMove & isGoodPerformance;
+
         %Mark stim/choice combination for every trial
-        stim_resp_set = [b.trial.contrastLeft'>0 b.trial.contrastRight'>0 b.trial.choice'];
+        stim_resp_set = [b.trial.contrastLeft(inclTrials)'>0 b.trial.contrastRight(inclTrials)'>0 b.trial.choice(inclTrials)'];
         [stim_resp,~,stim_resp_id] = unique(stim_resp_set,'rows');
+        tab = tabulate(stim_resp_id); 
+        stim_resp_counts = tab(:,2);
         
         %Get Stimulus-aligned activity for every trial
-        stimulus_times = b.timings.t_stimOn;
+        stimulus_times = b.timings.t_stimOn(inclTrials);
         assert(all(diff(stimulus_times)>0),'Timestamps not monotonically increasing');
         [avgperiStimV, periStimT, ~, ~] = ...
             eventLockedAvgSVD(wf.U_dff, wf.dV, wf.wfTime_dt,...
             stimulus_times, stim_resp_id, [0 0.25]);
         
         %Get movement-aligned activity for every trial
-        movement_times = stimulus_times + b.trial.reactionTime_better';
-        movement_times(isnan(movement_times)) = stimulus_times(isnan(movement_times)) + nanmedian(b.trial.reactionTime_better); %emulate nogo "movement" time
+        movement_times = stimulus_times + b.trial.reactionTime_better(inclTrials)';
+        movement_times(isnan(movement_times)) = stimulus_times(isnan(movement_times)) + nanmedian(b.trial.reactionTime_better(inclTrials)); %emulate nogo "movement" time
         [avgperiMoveV, periMoveT, ~, ~] = ...
             eventLockedAvgSVD(wf.U_dff, wf.dV, wf.wfTime_dt,...
             movement_times, stim_resp_id, [-0.2 0.2]);
         
         %Reconstruct the full map at each timepoint for each alignment
-        MAPstim = nan(size(wf.U_dff,1), size(wf.U_dff,2), length(periStimT),size(stim_resp,1));
-        MAPmove = nan(size(wf.U_dff,1), size(wf.U_dff,2), length(periMoveT),size(stim_resp,1));
+        MAPstim = nan(size(wf.U_dff,1), size(wf.U_dff,2), length(periStimT), 2, 2, 3);
+        MAPmove = nan(size(wf.U_dff,1), size(wf.U_dff,2), length(periMoveT), 2, 2, 3);
+        stim_resp_counts = nan(2,2,3);
         f = waitbar(0,'Please wait...');
         for cond = 1:size(stim_resp,1)
             waitbar(cond/size(stim_resp,1),f,'Loading your data');
-            MAPstim(:,:,:,cond) = svdFrameReconstruct(wf.U_dff, permute(avgperiStimV(cond,:,:),[2 3 1]) ).*mask;
-            MAPmove(:,:,:,cond) = svdFrameReconstruct(wf.U_dff, permute(avgperiMoveV(cond,:,:),[2 3 1]) ).*mask;
+            
+            CL = stim_resp(cond,1)+1;
+            CR = stim_resp(cond,2)+1;
+            R = stim_resp(cond,3);
+            
+            MAPstim(:,:,:,CL,CR,R) = svdFrameReconstruct(wf.U_dff, permute(avgperiStimV(cond,:,:),[2 3 1]) ).*mask;
+            MAPmove(:,:,:,CL,CR,R) = svdFrameReconstruct(wf.U_dff, permute(avgperiMoveV(cond,:,:),[2 3 1]) ).*mask;
+            stim_resp_counts(CL,CR,R) = sum(stim_resp_id==cond);
         end
         close(f);
-        
-        %     %Extract activity at each ROI
-        %     ROIstim = nan(numTrials,length(periStimT),numel(roi.px));
-        %     ROImove = nan(numTrials,length(periMoveT),numel(roi.px));
-        %     for p =1:numel(roi.px)
-        %         thisU = squeeze(wf.U_dff(roi.px(p).row, roi.px(p).col, :));
-        %         for n = 1:numTrials
-        %             ROIstim(n,:,p) = thisU'*squeeze(periStimV(n,:,:));
-        %             ROImove(n,:,p) = thisU'*squeeze(periMoveV(n,:,:));
-        %         end
-        %     end
-        %
-        
-        %Save smaller files to .mat
-        save(wfAlignedFile,'stim_resp','periStimT','periMoveT','mask');
         
         %Save maps to HDFS
         mapFile = strrep(wfAlignedFile,'.mat','.h5');        
@@ -344,16 +331,15 @@ for sess = 1:height(sessionList)
         h5create(mapFile,'/MAPmove',size(MAPmove));
         h5write(mapFile,'/MAPstim',MAPstim);
         h5write(mapFile,'/MAPmove',MAPmove);
+        
+                %Save smaller files to .mat
+        save(wfAlignedFile,'stim_resp_counts','periStimT','periMoveT','mask');
+        
     end
 end
 
-%% PLOT 1: SESSION-AVERAGED MAP FOR ONE MOUSE
-mouse = 'Hench';
 
-
-
-
-%% Get activity and behavioural data, align timestamps, compute traces
+%% OLD: Get activity and behavioural data, align timestamps, compute traces
 for sess = 1:height(sessionList)
     eRef = sessionList.expRef{sess};
     fprintf('Session %d %s\n',sess,eRef);
@@ -383,7 +369,6 @@ for sess = 1:height(sessionList)
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         %%%%%% COMPUTE STIM-ALIGNED TRACES & ONSET LATENCIES %%%
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        aligned_analysis_file = [ '../preproc/WF_aligned/' eRef '.mat'];
         [~, winSamps, periEventdV, label] = ...
             eventLockedAvgSVD(U_dff, dV, wfTime_dt,...
             timings.t_stimOn(inclTrials), ...
@@ -410,7 +395,6 @@ for sess = 1:height(sessionList)
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         %%%%%% Save %%%%%%%%%%%
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        save(aligned_analysis_file,'winSamps','avgStimAlign','contraLatency','label','px');
         
     end
 end
@@ -420,82 +404,57 @@ fprintf('Session %d %s\n',SESSIONID,eRef);
 wfFile = [ './preproc/WF_SVD/' eRef '.mat'];
 behavFile = [ './preproc/BEHAV/' eRef '.mat'];
 roiFile = [ './preproc/WF_ROI/' sessionList.mouseName{SESSIONID} '.mat'];
-    
-    wf = load(wfFile);
-    b = load(behavFile);
-    roi = load(roiFile);
-    
-    bregma=roi.px(1);
-    roi.px(1)=[];
-   
+wfAlignedFile = [ './preproc/WF_aligned/' eRef '.mat'];
+wfAlignedMapFile = [ './preproc/WF_aligned/' eRef '.h5'];
 
-%Define mask around the outermost point of the allen atlas
-load('D:\ctxOutlines.mat');
-f=figure;
-ha = axes;
-addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col],[1 1 1]*0,ha);
-contours = get(ha,'children');
-mask = zeros(size(meanImg_registered));
-for q = 1:length(contours)
-    mask = mask | poly2mask(contours(q).XData, contours(q).YData, size(meanImg_registered,1), size(meanImg_registered,2));
-end
+wf = load(wfFile);
+b = load(behavFile);
+roi = load(roiFile);
+align = load(wfAlignedFile);
+MAPstim = h5read(wfAlignedMapFile,'/MAPstim');
+MAPmove = h5read(wfAlignedMapFile,'/MAPmove');
 
-mask = imgaussfilt(double(mask),3);
-XLIM = [find(sum(mask,1)>0,1,'first') find(sum(mask,1)>0,1,'last')];
-YLIM = [find(sum(mask,2)>0,1,'first') find(sum(mask,2)>0,1,'last')];
-close(f);
+bregma=roi.px(1);
+roi.px(1)=[];
+
 disp('Data loaded');
 %% 1) plot map aligned to stim onset
-isDetectionTrial = (b.trial.contrastRight==0 | b.trial.contrastLeft==0);
-isGoodPerformance = b.trial.repNum==1 & b.trial.feedback==1;
-isGoodWheelMove = b.trial.choice==3 | isnan(b.trial.reactionTime_better) | (b.trial.reactionTime_better>0.125 & b.trial.reactionTime_better<0.5);
-inclTrials = isDetectionTrial & isGoodWheelMove & isGoodPerformance;
-
 figure(101); set(gcf,'color','w');
-[avgdV, wS, ~, ~] = ...
-    eventLockedAvgSVD(wf.U_dff, wf.dV, wf.wfTime_dt,...
-    b.timings.t_stimOn(inclTrials), ...
-    sign(b.trial.contrastRight(inclTrials)-b.trial.contrastLeft(inclTrials)), ...
-    [0 0.25]);
-avgdV = avgdV - avgdV(:,:,1);%remove baseline
-sliceIdx = 5:15:length(wS);
-ha = tight_subplot(3,length(sliceIdx),0.01,[0.7 0.05],0.01);
 
-for i = 1:length(sliceIdx)
-    imL = svdFrameReconstruct(U_dff, permute(avgdV(1,:,sliceIdx(i)),[2 3 1]) ).*mask;
+%Rectify and baseline stim-aligned maps
+MAPstim(MAPstim<0)=0;
+MAPstim = MAPstim - MAPstim(:,:,1,:);
+
+
+sliceTimes = [0 0.07 0.12 0.2 0.25];
+sliceTimes = [0.008 0.038 0.068 0.098 0.128 0.158 0.188 0.218 0.248];
+ha = tight_subplot(3,length(sliceTimes),0,[0.7 0.02],0);
+for i = 1:length(sliceTimes)
+    %get nearest time index for this sliceTime
+    idx = find( align.periStimT >= sliceTimes(i),1,'first');
+    
+    imL = MAPstim(:,:,idx,2,1,1);
     imagesc( ha(i), imL );
     addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*1, ha(i));
     hold(ha(i),'on'); plot(ha(i),bregma.col,bregma.row,'k.')
     
-    imR = svdFrameReconstruct(U_dff, permute(avgdV(3,:,sliceIdx(i)),[2 3 1]) ).*mask;
-    imagesc( ha(i + length(sliceIdx) ), imR );
-    addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*1,ha(i + length(sliceIdx) ));
-    hold(ha(i + length(sliceIdx) ),'on'); plot(ha(i + length(sliceIdx) ),bregma.col,bregma.row,'k.')
+    imR = MAPstim(:,:,idx,1,2,2);
+    imagesc( ha(i + length(sliceTimes) ), imR );
+    addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*1,ha(i + length(sliceTimes) ));
+    hold(ha(i + length(sliceTimes) ),'on'); plot(ha(i + length(sliceTimes) ),bregma.col,bregma.row,'k.')
     
-    imagesc( ha(i + 2*length(sliceIdx) ), imL-imR );
-    addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*1,ha(i + 2*length(sliceIdx) ));
-    hold(ha(i + 2*length(sliceIdx) ),'on'); plot(ha(i + 2*length(sliceIdx) ),bregma.col,bregma.row,'k.')
+    imagesc( ha(i + 2*length(sliceTimes) ), imL-imR );
+    addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*1,ha(i + 2*length(sliceTimes) ));
+    hold(ha(i + 2*length(sliceTimes) ),'on'); plot(ha(i + 2*length(sliceTimes) ),bregma.col,bregma.row,'k.')
     
-    title(ha(i), wS(sliceIdx(i)));
-%     
-%     imL = svdFrameReconstruct(U_dff, permute(avgdV(1,:,sliceIdx(i)),[2 3 1]) ).*mask;
-%     imR = svdFrameReconstruct(U_dff, permute(avgdV(3,:,sliceIdx(i)),[2 3 1]) ).*mask;
-%    
-%     imagesc( ha,xcoords+ size(meanImg,2)*i,ycoords,imL );
-%     addAllenCtxOutlines([bregma_AP bregma_ML+size(meanImg,2)*i], [lambda_AP lambda_ML+ size(meanImg,2)*i], [1 1 1]*1, ha);
-%     
-%     imagesc( ha,xcoords+ size(meanImg,2)*i,ycoords + size(meanImg,1),imR );
-%     addAllenCtxOutlines([bregma_AP+size(meanImg,1) bregma_ML+size(meanImg,2)*i], [lambda_AP+size(meanImg,1) lambda_ML+ size(meanImg,2)*i], [1 1 1]*1, ha);
-% 
-%     imagesc( ha,xcoords+ size(meanImg,2)*i,ycoords + 2*size(meanImg,1),imL-imR );
-%     addAllenCtxOutlines([bregma_AP+2*size(meanImg,1) bregma_ML+size(meanImg,2)*i], [lambda_AP+2*size(meanImg,1) lambda_ML+ size(meanImg,2)*i], [1 1 1]*1, ha);
+    title(ha(i), sliceTimes(i) );
 end
 cmap = [ones(100,1) linspace(0,1,100)' linspace(0,1,100)';
     linspace(1,0,100)' linspace(1,0,100)' ones(100,1)];
 colormap(flipud(cmap));
 set(ha,'clim',[-1 1]*0.008);
 set(ha,'xcolor','none','ycolor','none','dataaspectratio',[1 1 1]);
-set(ha,'xlim',XLIM,'ylim',YLIM);
+% set(ha,'xlim',XLIM,'ylim',YLIM);
 %% 2) Plot traces and ROIs
 
 [~, winSamps, periEventdV, label] = ...
@@ -798,83 +757,127 @@ for sess = 1:height(sessionList)
 end
 
 %% GROUP LEVEL: average maps
-sessIDs = find(contains(sessionList.mouseName,'Hench'));
-eRefs = sessionList.expRef(sessIDs);
-%Load first session meanImg 
+mouse = 'Hench';
+refImg = load(['./preproc/reference_image/' mouse '.mat'], 'meanImg');
+sessIDs = find(contains(sessionList.mouseName,mouse));
 
-meanImg_1=load([ './preproc/WF_ROI/' eRefs{1} '.mat'],'meanImg'); meanImg_1 = meanImg_1.meanImg;
-[optimizer,metric] = imregconfig('Multimodal');
+stimSliceTimes = [0 0.07 0.12 0.2 0.25];
+stimSliceTimes = linspace(0,0.25,10);
+[~,stimSliceIdx]=find(abs(align.periStimT - stimSliceTimes')==min(abs(align.periStimT - stimSliceTimes'),[],2));
 
-mapStack = nan(size(meanImg_1,1), size(meanImg_1,2), 2,  9,length(sessIDs));
+moveSliceTimes = [-0.2 -0.1 0 0.1 0.2];
+moveSliceTimes = linspace(-0.1,0.2,10);
+[~,moveSliceIdx]=find(abs(align.periMoveT - moveSliceTimes')==min(abs(align.periMoveT - moveSliceTimes'),[],2));
+
+MAPstimStack = nan(size(refImg.meanImg,1), size(refImg.meanImg,2), length(stimSliceIdx),2,2,3,length(sessIDs));
+MAPmoveStack = nan(size(refImg.meanImg,1), size(refImg.meanImg,2), length(moveSliceIdx),2,2,3,length(sessIDs));
 for sess = 1:length(sessIDs)
-    thisSID = sessIDs(sess);
-    load([ './preproc/WF_ROI/' eRefs{sess} '.mat'],'eRef','px','wfTime_dt','U_dff','dV','meanImg','mon','trial','timings','inclTrials');
+    eRef = sessionList.expRef{sessIDs(sess)};
+    fprintf('Session %d %s\n',sessIDs(sess),eRef);
+    wfFile = [ './preproc/WF_SVD/' eRef '.mat'];
+    behavFile = [ './preproc/BEHAV/' eRef '.mat'];
+    roiFile = [ './preproc/WF_ROI/' sessionList.mouseName{SESSIONID} '.mat'];
+    wfAlignedFile = [ './preproc/WF_aligned/' eRef '.mat'];
+    wfAlignedMapFile = [ './preproc/WF_aligned/' eRef '.h5'];
     
-    %register this session's meanImage to the standard 
-    transform = imregtform(meanImg, meanImg_1, 'similarity' ,optimizer,metric);
+    wf = load(wfFile);
+    b = load(behavFile);
+    roi = load(roiFile);
+    align = load(wfAlignedFile);
+    MAPstim = h5read(wfAlignedMapFile,'/MAPstim');
+    MAPmove = h5read(wfAlignedMapFile,'/MAPmove');
     
-%     %Test that the registration worked
-    figure;
-    ha1=subplot(1,2,1);
-    ha2=subplot(1,2,2);
-    imshowpair(meanImg_1, meanImg,'Parent',ha1);
-    meanImg_registered = imwarp(meanImg,transform,'OutputView',imref2d(size(meanImg_1)));
-    imshowpair(meanImg_1, meanImg_registered,'Parent',ha2); drawnow;
+    bregma=roi.px(1);
+    roi.px(1)=[];
     
-    %Register the U components
-    U_dff_registered = nan(size(meanImg_1,1), size(meanImg_1,2), size(U_dff,3));
-    for c = 1:size(U_dff,3)
-        U_dff_registered(:,:,c) = imwarp(U_dff(:,:,c),transform,'OutputView',imref2d(size(meanImg_1)));
-    end
+    %Rectify and baseline stim-aligned maps
+    MAPstim(MAPstim<0)=0;
+    MAPstim = MAPstim - MAPstim(:,:,1,:,:,:);
     
-    [avgdV, wS, ~, ~] = ...
-        eventLockedAvgSVD([], dV, wfTime_dt,...
-        timings.t_stimOn(inclTrials), ...
-        sign(trial.contrastRight(inclTrials)-trial.contrastLeft(inclTrials)), ...
-        [0 0.25]);
-    avgdV = avgdV - avgdV(:,:,1);%remove baseline
+%     %baseline mov-aligned maps
+%     MAPstim = MAPmove - MAPmove(:,:,1,:,:,:);
     
-    sliceIdx = 5:15:length(wS);
-    for i = 1:length(sliceIdx)
-        mapStack(:,:,1,i,sess) = svdFrameReconstruct(U_dff_registered, permute(avgdV(1,:,sliceIdx(i)),[2 3 1]) );
-        mapStack(:,:,2,i,sess) = svdFrameReconstruct(U_dff_registered, permute(avgdV(3,:,sliceIdx(i)),[2 3 1]) );
-    end
+    MAPstimStack(:,:,:,:,:,:,sess) = MAPstim(:,:,stimSliceIdx,:,:,:);
+    MAPmoveStack(:,:,:,:,:,:,sess) = MAPmove(:,:,moveSliceIdx,:,:,:);
 end
+avgMAPstimStack = nanmean(MAPstimStack,7);
+avgMAPmoveStack = nanmean(MAPmoveStack,7);
 
-
-
-fL=figure('name','CL');
-haL = tight_subplot( length(sessIDs)+1, length(sliceIdx), 0, [0 0.05], 0);
-fR=figure('name','CR');
-haR = tight_subplot( length(sessIDs)+1, length(sliceIdx), 0, [0 0.05], 0);
+%Every session: left choice on CL
+f=figure('name','Every session: Left choice on CL');
+haL = tight_subplot( length(sessIDs)+1, length(stimSliceTimes), 0, [0 0.05], 0);
 for sess = 1:length(sessIDs)
-
-    sliceIdx = 5:15:length(wS);
-    for i = 1:length(sliceIdx)
-        imagesc(haL( length(sliceIdx)*(sess-1) + i), mapStack(:,:,1, i, sess) );
-        imagesc(haR( length(sliceIdx)*(sess-1) + i), mapStack(:,:,2, i, sess) );
-        
-        if sess == 1
-            title( haL( length(sliceIdx)*(sess-1) + i), 1000*wS(sliceIdx(i)));
-            title( haR( length(sliceIdx)*(sess-1) + i), 1000*wS(sliceIdx(i)));
-        end
+    for i = 1:length(stimSliceTimes)
+        imagesc(haL( length(stimSliceTimes)*(sess-1) + i), MAPstimStack(:,:,i,2,1,1,sess) );        
     end
 end
-
-avgMap = mean(mapStack,5);
-for i = 1:length(sliceIdx)
-    imagesc(haL( length(sliceIdx)*(length(sessIDs)) + i), avgMap(:,:,1, i) );
-    imagesc(haR( length(sliceIdx)*(length(sessIDs)) + i), avgMap(:,:,2, i) );
+for i = 1:length(stimSliceTimes)
+    imagesc(haL( length(stimSliceTimes)*(length(sessIDs)) + i), avgMAPstimStack(:,:,i,2,1,1) );
+%     imagesc(haR( length(sliceIdx)*(length(sessIDs)) + i), avgMap(:,:,2, i) );
 end
-
-
-set([haL; haR],'dataaspectratio',[ 1 1 1],'clim',[-1 1]*0.008,'xcolor','none','ycolor','none');
-
+% set(haL,'dataaspectratio',[ 1 1 1],'clim',[-1 1]*0.008,'xcolor','none','ycolor','none');
+set(haL,'dataaspectratio',[ 1 1 1],'clim',[-1 1]*quantile(abs(avgMAPstimStack(:)),0.99),'xcolor','none','ycolor','none');
 cmap = [ones(100,1) linspace(0,1,100)' linspace(0,1,100)';
     linspace(1,0,100)' linspace(1,0,100)' ones(100,1)];
+colormap(flipud(cmap));
 
-figure(fL);
+%Average only: all set
+f=figure('name','Average across sessions for this mouse STIM ALIGNED');
+haTop = tight_subplot( 2, length(stimSliceTimes)/2, 0.01, [0 0.05], 0);
+for i = 1:length(stimSliceTimes)
+    bounds = get(haTop(i),'position');
+    set(haTop(i),'xcolor','none','ycolor','none');
+    title(haTop(i),stimSliceTimes(i));
+        
+     %replace with many subplots within the bounds of the original
+     ha = tight_subplot(3,3,0, [bounds(2) 1-bounds(2)-bounds(4)], [bounds(1) 1-bounds(1)-bounds(3)]);
+     
+     %Plot a 3x3 grid of respxstim condition maps
+     
+     imagesc(ha(1), avgMAPstimStack(:,:,i,2,1,1)); %Left choice & Left stim
+     imagesc(ha(2), avgMAPstimStack(:,:,i,1,1,1)); %Left choice & Zero stim
+     imagesc(ha(3), avgMAPstimStack(:,:,i,1,2,1)); %Left choice & Right stim
+     
+     imagesc(ha(4), avgMAPstimStack(:,:,i,2,1,3)); %NoGo choice & Left stim
+     imagesc(ha(5), avgMAPstimStack(:,:,i,1,1,3)); %NoGo choice & Zero stim
+     imagesc(ha(6), avgMAPstimStack(:,:,i,1,2,3)); %NoGo choice & Right stim
+     
+     imagesc(ha(7), avgMAPstimStack(:,:,i,2,1,2)); %Right choice & Left stim
+     imagesc(ha(8), avgMAPstimStack(:,:,i,1,1,2)); %Right choice & Zero stim
+     imagesc(ha(9), avgMAPstimStack(:,:,i,1,2,2)); %Right choice & Right stim
+     set(ha,'dataaspectratio',[ 1 1 1],'clim',[-1 1]*quantile(abs(avgMAPstimStack(:)),0.999),'xcolor','none','ycolor','none');
+end
 colormap(flipud(cmap));
-figure(fR);
+
+%Average only: all set
+f=figure('name','Average across sessions for this mouse MOVE ALIGNED');
+haTop = tight_subplot( 2, length(moveSliceTimes)/2, 0.01, [0 0.05], 0);
+for i = 1:length(moveSliceTimes)
+    bounds = get(haTop(i),'position');
+    set(haTop(i),'xcolor','none','ycolor','none');
+    title(haTop(i),moveSliceTimes(i));
+        
+     %replace with many subplots within the bounds of the original
+     ha = tight_subplot(3,3,0, [bounds(2) 1-bounds(2)-bounds(4)], [bounds(1) 1-bounds(1)-bounds(3)]);
+     
+     %Plot a 3x3 grid of respxstim condition maps
+     
+     imagesc(ha(1), avgMAPmoveStack(:,:,i,2,1,1)); %Left choice & Left stim
+     imagesc(ha(2), avgMAPmoveStack(:,:,i,1,1,1)); %Left choice & Zero stim
+     imagesc(ha(3), avgMAPmoveStack(:,:,i,1,2,1)); %Left choice & Right stim
+     
+     imagesc(ha(4), avgMAPmoveStack(:,:,i,2,1,3)); %NoGo choice & Left stim
+     imagesc(ha(5), avgMAPmoveStack(:,:,i,1,1,3)); %NoGo choice & Zero stim
+     imagesc(ha(6), avgMAPmoveStack(:,:,i,1,2,3)); %NoGo choice & Right stim
+     
+     imagesc(ha(7), avgMAPmoveStack(:,:,i,2,1,2)); %Right choice & Left stim
+     imagesc(ha(8), avgMAPmoveStack(:,:,i,1,1,2)); %Right choice & Zero stim
+     imagesc(ha(9), avgMAPmoveStack(:,:,i,1,2,2)); %Right choice & Right stim
+     set(ha,'dataaspectratio',[ 1 1 1],'clim',[-1 1]*quantile(abs(avgMAPmoveStack(:)),0.999),'xcolor','none','ycolor','none');
+end
 colormap(flipud(cmap));
+
+
+
+
 
