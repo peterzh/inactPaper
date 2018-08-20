@@ -2,6 +2,8 @@
 clear all;
 expRefs = readtable('./sessionList_sparse_unilateral.csv','FileType','text','Delimiter',',');
 expRefs = expRefs.expRef;
+mouseName = cellfun(@(e)e{3},cellfun(@(s) strsplit(s,'_'), expRefs,'uni',0),'uni',0);
+[names,~,subjID] = unique(mouseName);
 
 %Load standard coordset
 load('26CoordSet.mat','coordSet');
@@ -13,6 +15,7 @@ for session = 1:length(expRefs)
     dd = loadData(expRefs{session});
     dd = structfun(@(x)(x(6:(end-14),:)),dd,'uni',0); %trim first 5 trials and last 15
     dd.sessionID = ones(length(dd.response),1)*ii;
+    dd.subjectID = ones(length(dd.response),1)*subjID(session);
     
     %Add extra inactivation labels
     dd.laserRegion(dd.laserCoord(:,1)==0.5 & dd.laserCoord(:,2)==-2) = 'RightRSP';
@@ -377,7 +380,7 @@ fit = bfit.fitModel('Two-Level-Perturbation',dat);
 % fit=load("C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\2018-06-21_1703_Two-Level-Perturbation.mat");
 fit=load("C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\Two-level_removed_pre_stim_movement_trials.mat");
 
-%% Plot multi-level 
+%% Plot multi-level model fits
 % areaCols = [ 0 0 1;
 %              0 0 0.5;
 %              0 1 0;
@@ -463,6 +466,7 @@ cDiffUnique=cellfun(@str2num,lab(1:size(prob,1),1));
 ha = tight_subplot(4,3,0.01,0.05,[0.05 0.5]);
 ii=1;
 for region = [1 3 2 4]
+% for region = 1:3
     %Global fit
     BL = fit.posterior.bias(:,1) + fit.posterior.delta(:,1,region);
     BR = fit.posterior.bias(:,2) + fit.posterior.delta(:,2,region);
@@ -503,4 +507,262 @@ set(ha,'ylim',[0 1],'xlim',[-1 1]);
 title(ha(1),'pLeft');
 title(ha(2),'pNoGo');
 title(ha(3),'pRight');
-set(ha,'dataaspectratio',[1.5 1 1]);
+set(ha,'dataaspectratio',[1 1 1]);
+
+%% Plot model-free results
+
+% figure(401);
+
+brainRegions = {'LeftVIS','RightVIS','LeftM2','RightM2'};
+D1 = getrow(D, any(D.laserRegion == brainRegions,2) | D.laserType==0);
+dat = struct('contrastLeft', D1.stimulus(:,1),...
+    'contrastRight', D1.stimulus(:,2),...
+    'choice', D1.response,...
+    'sessionID', D1.sessionID,...
+    'subjectID', D1.subjectID);
+dat.perturbation = zeros(size(dat.choice));
+for p = 1:length(brainRegions)
+    dat.perturbation(D1.laserRegion == brainRegions{p}) = p;
+end
+
+%Get prob of choice for all possible conditions
+[counts,~,~,labels] = crosstab(dat.contrastLeft,...
+    dat.contrastRight,...
+    dat.choice,...
+    dat.sessionID,...
+    dat.subjectID,...
+    dat.perturbation);
+
+%             %Combine left and right hemisphere data
+%             counts(:,:,:,:,:,2) = counts(:,:,:,:,:,2) + counts(:,:,:,:,:,3);
+%             counts(:,:,:,:,:,4) = counts(:,:,:,:,:,4) + counts(:,:,:,:,:,5);
+%
+prob = counts./sum(counts,3);%Convert to probability over choices
+%Change from laser off condition
+dProb = prob(:,:,:,:,:,2:end) - prob(:,:,:,:,:,1);
+
+
+%1: is there an effect on pNG at zero contrast
+fig=figure('color','w');
+subplot(1,2,1);
+title({'Per session change','pNG on zero contrast'});
+hold on;
+
+col_set = copper(max(dat.subjectID));
+for region = 1:length(brainRegions)
+    dNG = squeeze(dProb(1,1,3,:,:,region));
+    
+    
+                    for subj = 1:max(dat.subjectID)
+                        plot(region + 0.05*randn(size(dNG(:,subj))), dNG(:,subj),'.','markersize',20,'Color',col_set(subj,:) )
+                    end
+    
+    mn = mean(dNG(~isnan(dNG)));
+    sr = std(dNG(~isnan(dNG))) / sqrt(sum(~isnan(dNG(:))));
+    
+    
+    fill(region + [-1 1 1 -1]*0.45, mn + [-1 -1 1 1]*0.005, 'k' );
+    fx=fill(region + [-1 1 1 -1]*0.45, mn + [-1 -1 1 1]*sr, 'k' ); alpha(fx,0.1); fx.EdgeAlpha=0;
+    
+    if signrank(dNG(~isnan(dNG))) < 0.05
+        plot(region, 1, 'r.','markersize',40);
+    end
+    
+end
+set(gca,'xtick',1:length(brainRegions),'xticklabel',brainRegions);
+ylabel('delta pNG');
+
+
+%2: Is there an effect whereby, inactivating on the side
+%contralateral to the stimulus causes an increase in
+%ipsilateral choices
+[counts,~,~,labels] = crosstab(dat.contrastLeft>0,...
+    dat.contrastRight>0,...
+    dat.choice,...
+    dat.sessionID,...
+    dat.subjectID,...
+    dat.perturbation);
+prob = counts./sum(counts,3);%Convert to probability over choices
+dProb = prob(:,:,:,:,:,2:end) - prob(:,:,:,:,:,1);
+dProb = nanmean(dProb,4); %Average over sessions for each subject
+
+subplot(1,2,2); hold on;
+title({'change in probability of choosing the inactivated side','on contra stimuli'})
+for region = 1:length(brainRegions)
+    
+    %if left hemisphere, Change in left choices on CR
+    %if right hemisphere, change in right choices on CL
+    if contains(brainRegions{region},'Left')
+        dIpsi = squeeze( dProb(1,2,1,:,:,region) );
+    elseif contains(brainRegions{region},'Right')
+        dIpsi = squeeze( dProb(2,1,2,:,:,region) );
+    end
+    
+    
+    
+%     for subj = 1:max(dat.subjectID)
+%         plot(region + 0.05*randn(size(dIpsi(:,subj))), dIpsi(:,subj),'.','markersize',20,'Color',col_set(subj,:) )
+%     end
+    
+    mn = mean(dIpsi(~isnan(dIpsi)));
+    sr = std(dIpsi(~isnan(dIpsi))) / sqrt(sum(~isnan(dIpsi(:))));
+    
+    fill(region + [-1 1 1 -1]*0.45, mn + [-1 -1 1 1]*0.005, 'k' );
+    fx=fill(region + [-1 1 1 -1]*0.45, mn + [-1 -1 1 1]*sr, 'k' ); alpha(fx,0.1); fx.EdgeAlpha=0;
+    
+    
+end
+set(gca,'xtick',1:length(brainRegions),'xticklabel',brainRegions);
+ylabel('dP');
+
+%% new model-free results
+brainRegions = {'LeftVIS','RightVIS','LeftM2','RightM2','LeftS1','RightS1'};
+D1 = getrow(D, any(D.laserRegion == brainRegions,2) | D.laserType==0);
+dat = struct('contrastLeft', D1.stimulus(:,1),...
+    'contrastRight', D1.stimulus(:,2),...
+    'choice', D1.response,...
+    'sessionID', D1.sessionID,...
+    'subjectID', D1.subjectID);
+dat.perturbation = zeros(size(dat.choice));
+for p = 1:length(brainRegions)
+    dat.perturbation(D1.laserRegion == brainRegions{p}) = p;
+end
+
+%Get prob of choice for all possible conditions
+[counts,~,~,labels] = crosstab(dat.contrastLeft,...
+    dat.contrastRight,...
+    dat.choice,...
+    dat.sessionID,...
+    dat.subjectID,...
+    dat.perturbation);
+prob = counts./sum(counts,3);%Convert to probability over choices
+
+%average over sessions and subjects
+prob = nanmean(prob,4);
+prob = nanmean(prob,5);
+
+%
+%convert to change in probability from nolaser condition
+dProb = prob(:,:,:,:,:,2:end) - prob(:,:,:,:,:,1);
+
+dProb_VIS = nanmean(dProb(:,:,:,:,:,1:2),6);
+dProb_M2 = nanmean(dProb(:,:,:,:,:,3:4),6);
+dProb_S1 = nanmean(dProb(:,:,:,:,:,5:6),6);
+
+
+% pNOGO on zero C
+figure;
+subplot(1,4,1); hold on;
+bar(1, dProb_VIS(1,1,3) );
+bar(2, dProb_M2(1,1,3) );
+bar(3, dProb_S1(1,1,3) );
+
+
+% pNGO on zero C
+figure;
+subplot(1,4,1); hold on;
+for region = 1:length(brainRegions)
+    pNG_zC = dProb(1,1,3,:,:,region); pNG_zC = pNG_zC(~isnan(pNG_zC)); 
+    pNG_zC = reshape(pNG_zC,numel(pNG_zC),1);
+    bar(region, mean(pNG_zC));
+    plot(region, pNG_zC, 'ko');
+%     plot(region, mean(pNG_zC), 'r+');
+
+    %significance chi2 test of ind
+    n1 = 51; N1 = 8193; %laser off
+    n2 = 74; N2 = 8201;
+    % Pooled estimate of proportion
+    p0 = (n1+n2) / (N1+N2)
+    % Expected counts under H0 (null hypothesis)
+    n10 = N1 * p0;
+    n20 = N2 * p0;
+    % Chi-square test, by hand
+    observed = [n1 N1-n1 n2 N2-n2];
+    expected = [n10 N1-n10 n20 N2-n20];
+    chi2stat = sum((observed-expected).^2 ./ expected)
+    p = 1 - chi2cdf(chi2stat,1)
+end
+ylabel('delta NG on zero contrast');
+% 
+% 
+% % pGO on all C
+% subplot(1,4,2); hold on;
+% for region = 1:length(brainRegions)
+%     pNG_zC = dProb(:,:,3,:,:,region); pNG_zC = pNG_zC(~isnan(pNG_zC));
+%     pNG_zC = reshape(pNG_zC,numel(pNG_zC),1);
+%     bar(region, mean(pNG_zC));
+%     plot(region, pNG_zC, 'ko');
+% %     plot(region, mean(pNG_zC), 'r+');
+% end
+% ylabel('delta NG on all contrast');
+% 
+% 
+% %DpLeft-DpRight on zero C
+% subplot(1,4,3); hold on;
+% for region = 1:length(brainRegions)
+%     dpL = dProb(1,1,1,:,:,region); 
+%     dpR = dProb(1,1,2,:,:,region); 
+%     
+%     dP = dpL - dpR; dP = dP(~isnan(dP));
+%     dP = reshape(dP,numel(dP),1);
+%       
+%     bar(region, mean(dP));
+%     plot(region, dP, 'ko');
+% %     plot(region, mean(pNG_zC), 'r+');
+% end
+% ylabel('delta pL - delta pR on zero contrast');
+
+figure;
+% pGO on all C
+subplot(1,2,1); hold on;
+for region = 1:length(brainRegions)
+    pNG_zC = dProb(:,:,3,:,:,region); pNG_zC = pNG_zC(~isnan(pNG_zC));
+    pNG_zC = reshape(pNG_zC,numel(pNG_zC),1);
+    bar(region, mean(pNG_zC));
+    plot(region, pNG_zC, 'ko');
+%     plot(region, mean(pNG_zC), 'r+');
+end
+ylabel('delta NG on all contrast');
+
+%DpLeft-DpRight on zero C
+subplot(1,2,2); hold on;
+for region = 1:length(brainRegions)
+    dpL = dProb(:,:,1,:,:,region); 
+    dpR = dProb(:,:,2,:,:,region); 
+    
+    dP = dpL - dpR; dP = dP(~isnan(dP));
+    dP = reshape(dP,numel(dP),1);
+    
+    bar(region, mean(dP));
+    plot(region, dP, 'ko');
+%     plot(region, mean(pNG_zC), 'r+');
+end
+ylabel('delta pL - delta pR on all contrasts');
+
+%% IIA plot?
+%Get prob of choice for all possible conditions
+[counts,~,~,labels] = crosstab(D.stimulus(:,1),...
+    D.stimulus(:,2),...
+    D.response,...
+    D.laserType);
+
+counts = counts(:,:,:,1); %only nonlaser trials
+%convert to probability
+prob = counts./sum(counts,3);
+
+zl = log(prob(:,:,1)./prob(:,:,3));
+zr = log(prob(:,:,2)./prob(:,:,3));
+stim = cellfun(@(s) str2num(s),labels(:,1));
+
+figure;
+subplot(2,2,1);
+plot(stim, zl, 'o-'); xlabel('CL'); ylabel('Log pL/pNG');
+subplot(2,2,2);
+plot(stim, zr', 'o-');xlabel('CR'); ylabel('Log pR/pNG');
+
+subplot(2,2,3);
+plot(stim, zl', 'o-'); xlabel('CR'); ylabel('Log pL/pNG');
+hold on; plot(stim, mean(zl',2), 'ko--');
+subplot(2,2,4);
+plot(stim, zr, 'o-');xlabel('CL'); ylabel('Log pR/pNG');
+hold on; plot(stim, mean(zr',1), 'ko--');
