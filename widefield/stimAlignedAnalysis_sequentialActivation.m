@@ -22,13 +22,6 @@ contrastCols = [1 0 0; 0 0 0; 0 0 1];
 
 responseCols = copper(3);
 
-plotTypes = {'Stim-aligned, split by stimulus CDIFF';
-    'Stim-aligned, split by stimulus';
-    'Stim-aligned, split by choice';
-    'Move-aligned, split by stimulus';
-    'Move-aligned, split by choice'};
-plotColours = {cDiffCols; contrastCols; responseCols; contrastCols; responseCols};
-
 %% PREPROC: Behavioural data
 for sess = 1:height(sessionList)
     eRef = sessionList.expRef{sess};
@@ -271,9 +264,9 @@ for mouse = 1:length(names)
         px(1).col = px(1).col + shiftX;
     end
 end
-%% PREPROC: Extract activity at ROIs
+%% PREPROC: Extract epoch-aligned activity maps
 %Get stimulus-aligned and movement-aligned activity
-%No trial averaging yet, just do it separately for each trial
+%Averages over repeats of that condition
 for sess = 1:height(sessionList)
     eRef = sessionList.expRef{sess};
     fprintf('Session %d %s\n',sess,eRef);
@@ -282,43 +275,81 @@ for sess = 1:height(sessionList)
     behavFile = [ './preproc/BEHAV/' eRef '.mat'];
     pxFile = [ './preproc/WF_ROI/' sessionList.mouseName{sess} '.mat'];
  
-    wf = load(wfFile);
-    b = load(behavFile);
-    roi = load(pxFile); roi.px(1)=[]; %Delete bregma roi
-    
-    %Mark stim/choice combination for every trial
-    stim_resp_set = [b.trial.contrastLeft'>0 b.trial.contrastRight'>0 b.trial.choice'];
-    [stim_resp,~,stim_resp_id] = unique(stim_resp_set,'rows');
-    numTrials = size(stim_resp_id,1);
-    
-    %Get Stimulus-aligned activity for every trial
-    stimulus_times = b.timings.t_stimOn;
-    assert(all(diff(stimulus_times)>0),'Timestamps not monotonically increasing');
-    [~, periStimT, periStimV, ~] = ...
-    eventLockedAvgSVD(wf.U_dff, wf.dV, wf.wfTime_dt,...
-    stimulus_times, stim_resp_id, [0 0.25]);
-
-    %Get movement-aligned activity for every trial
-    movement_times = stimulus_times + b.trial.reactionTime_better';
-    movement_times(isnan(movement_times)) = stimulus_times(isnan(movement_times)) + nanmedian(b.trial.reactionTime_better); %emulate nogo "movement" time
-    [~, periMoveT, periMoveV, ~] = ...
-    eventLockedAvgSVD(wf.U_dff, wf.dV, wf.wfTime_dt,...
-    movement_times, stim_resp_id, [-0.5 0.2]);
-    
-    %Extract activity at each ROI
-    ROIstim = nan(numTrials,length(periStimT),numel(roi.px));
-    ROImove = nan(numTrials,length(periMoveT),numel(roi.px));
-    for p =1:numel(roi.px)
-        thisU = squeeze(wf.U_dff(roi.px(p).row, roi.px(p).col, :));
-        for n = 1:numTrials
-            ROIstim(n,:,p) = thisU'*squeeze(periStimV(n,:,:));
-            ROImove(n,:,p) = thisU'*squeeze(periMoveV(n,:,:));
-        end
-    end
-    
     wfAlignedFile = [ './preproc/WF_aligned/' eRef '.mat'];
-    save(wfAlignedFile,'stim_resp_set','ROIstim','ROImove','periStimT','periMoveT');
+    if ~exist(wfAlignedFile,'file')
+        wf = load(wfFile);
+        b = load(behavFile);
+        roi = load(pxFile);
+        
+        %Define mask around the outermost point of the allen atlas
+        bregma=roi.px(1);
+        f=figure;
+        ha = axes;
+        addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col],[1 1 1]*0,ha);
+        contours = get(ha,'children');
+        mask = zeros(size(wf.meanImg_registered));
+        for q = 1:length(contours)
+            mask = mask | poly2mask(contours(q).XData, contours(q).YData, size(wf.meanImg_registered,1), size(wf.meanImg_registered,2));
+        end
+        mask = imgaussfilt(double(mask),3);
+        f.delete;
+        
+        %Mark stim/choice combination for every trial
+        stim_resp_set = [b.trial.contrastLeft'>0 b.trial.contrastRight'>0 b.trial.choice'];
+        [stim_resp,~,stim_resp_id] = unique(stim_resp_set,'rows');
+        
+        %Get Stimulus-aligned activity for every trial
+        stimulus_times = b.timings.t_stimOn;
+        assert(all(diff(stimulus_times)>0),'Timestamps not monotonically increasing');
+        [avgperiStimV, periStimT, ~, ~] = ...
+            eventLockedAvgSVD(wf.U_dff, wf.dV, wf.wfTime_dt,...
+            stimulus_times, stim_resp_id, [0 0.25]);
+        
+        %Get movement-aligned activity for every trial
+        movement_times = stimulus_times + b.trial.reactionTime_better';
+        movement_times(isnan(movement_times)) = stimulus_times(isnan(movement_times)) + nanmedian(b.trial.reactionTime_better); %emulate nogo "movement" time
+        [avgperiMoveV, periMoveT, ~, ~] = ...
+            eventLockedAvgSVD(wf.U_dff, wf.dV, wf.wfTime_dt,...
+            movement_times, stim_resp_id, [-0.2 0.2]);
+        
+        %Reconstruct the full map at each timepoint for each alignment
+        MAPstim = nan(size(wf.U_dff,1), size(wf.U_dff,2), length(periStimT),size(stim_resp,1));
+        MAPmove = nan(size(wf.U_dff,1), size(wf.U_dff,2), length(periMoveT),size(stim_resp,1));
+        f = waitbar(0,'Please wait...');
+        for cond = 1:size(stim_resp,1)
+            waitbar(cond/size(stim_resp,1),f,'Loading your data');
+            MAPstim(:,:,:,cond) = svdFrameReconstruct(wf.U_dff, permute(avgperiStimV(cond,:,:),[2 3 1]) ).*mask;
+            MAPmove(:,:,:,cond) = svdFrameReconstruct(wf.U_dff, permute(avgperiMoveV(cond,:,:),[2 3 1]) ).*mask;
+        end
+        close(f);
+        
+        %     %Extract activity at each ROI
+        %     ROIstim = nan(numTrials,length(periStimT),numel(roi.px));
+        %     ROImove = nan(numTrials,length(periMoveT),numel(roi.px));
+        %     for p =1:numel(roi.px)
+        %         thisU = squeeze(wf.U_dff(roi.px(p).row, roi.px(p).col, :));
+        %         for n = 1:numTrials
+        %             ROIstim(n,:,p) = thisU'*squeeze(periStimV(n,:,:));
+        %             ROImove(n,:,p) = thisU'*squeeze(periMoveV(n,:,:));
+        %         end
+        %     end
+        %
+        
+        %Save smaller files to .mat
+        save(wfAlignedFile,'stim_resp','periStimT','periMoveT','mask');
+        
+        %Save maps to HDFS
+        mapFile = strrep(wfAlignedFile,'.mat','.h5');        
+        h5create(mapFile,'/MAPstim',size(MAPstim));
+        h5create(mapFile,'/MAPmove',size(MAPmove));
+        h5write(mapFile,'/MAPstim',MAPstim);
+        h5write(mapFile,'/MAPmove',MAPmove);
+    end
 end
+
+%% PLOT 1: SESSION-AVERAGED MAP FOR ONE MOUSE
+mouse = 'Hench';
+
 
 
 
@@ -335,14 +366,7 @@ for sess = 1:height(sessionList)
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         %%%%%% Load ROI definitions %%%%%%%%%%%
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%         clear px;
-%         px(1).name = 'VISp'; px(1).xy = [sessionList.row_VISp(sess) sessionList.col_VISp(sess)];
-%         px(2).name = 'VISlm'; px(2).xy = [sessionList.row_VISlm(sess) sessionList.col_VISlm(sess)];
-%         px(3).name = 'MOs'; px(3).xy = [sessionList.row_MOs(sess) sessionList.col_MOs(sess)];
-%         px(4).name = 'MOp'; px(4).xy = [sessionList.row_MOp(sess) sessionList.col_MOp(sess)];
-%         px(5).name = 'SSp'; px(5).xy = [sessionList.row_S1(sess) sessionList.col_S1(sess)];
-%         %         px(6).name = 'RSP'; px(6).xy = [sessionList.row_RSP(sess) sessionList.col_RSP(sess)];
-%         
+
 %         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %         %%%%%% INCLUSION CRITERIA FOR TRIALS %%%%%%%%%%%
 %         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
