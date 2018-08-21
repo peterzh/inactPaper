@@ -757,26 +757,26 @@ for sess = 1:height(sessionList)
 end
 
 %% GROUP LEVEL: average maps
+clearvars -except sessionList
+
 mouse = 'Hench';
 refImg = load(['./preproc/reference_image/' mouse '.mat'], 'meanImg');
 sessIDs = find(contains(sessionList.mouseName,mouse));
 
 stimSliceTimes = [0 0.07 0.12 0.2 0.25];
-stimSliceTimes = linspace(0,0.25,10);
-[~,stimSliceIdx]=find(abs(align.periStimT - stimSliceTimes')==min(abs(align.periStimT - stimSliceTimes'),[],2));
+stimSliceTimes = linspace(0,0.25,6);
 
 moveSliceTimes = [-0.2 -0.1 0 0.1 0.2];
-moveSliceTimes = linspace(-0.1,0.2,10);
-[~,moveSliceIdx]=find(abs(align.periMoveT - moveSliceTimes')==min(abs(align.periMoveT - moveSliceTimes'),[],2));
+moveSliceTimes = linspace(-0.1,0.2,6);
 
-MAPstimStack = nan(size(refImg.meanImg,1), size(refImg.meanImg,2), length(stimSliceIdx),2,2,3,length(sessIDs));
-MAPmoveStack = nan(size(refImg.meanImg,1), size(refImg.meanImg,2), length(moveSliceIdx),2,2,3,length(sessIDs));
+MAPstimStack = nan(size(refImg.meanImg,1), size(refImg.meanImg,2), length(stimSliceTimes),2,2,3,length(sessIDs));
+MAPmoveStack = nan(size(refImg.meanImg,1), size(refImg.meanImg,2), length(moveSliceTimes),2,2,3,length(sessIDs));
 for sess = 1:length(sessIDs)
     eRef = sessionList.expRef{sessIDs(sess)};
     fprintf('Session %d %s\n',sessIDs(sess),eRef);
     wfFile = [ './preproc/WF_SVD/' eRef '.mat'];
     behavFile = [ './preproc/BEHAV/' eRef '.mat'];
-    roiFile = [ './preproc/WF_ROI/' sessionList.mouseName{SESSIONID} '.mat'];
+    roiFile = [ './preproc/WF_ROI/' mouse '.mat'];
     wfAlignedFile = [ './preproc/WF_aligned/' eRef '.mat'];
     wfAlignedMapFile = [ './preproc/WF_aligned/' eRef '.h5'];
     
@@ -796,7 +796,9 @@ for sess = 1:length(sessIDs)
     
 %     %baseline mov-aligned maps
 %     MAPstim = MAPmove - MAPmove(:,:,1,:,:,:);
-    
+    [~,stimSliceIdx]=find(abs(align.periStimT - stimSliceTimes')==min(abs(align.periStimT - stimSliceTimes'),[],2));
+    [~,moveSliceIdx]=find(abs(align.periMoveT - moveSliceTimes')==min(abs(align.periMoveT - moveSliceTimes'),[],2));
+
     MAPstimStack(:,:,:,:,:,:,sess) = MAPstim(:,:,stimSliceIdx,:,:,:);
     MAPmoveStack(:,:,:,:,:,:,sess) = MAPmove(:,:,moveSliceIdx,:,:,:);
 end
