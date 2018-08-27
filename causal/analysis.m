@@ -3,7 +3,7 @@ clear all;
 expRefs = readtable('./sessionList_sparse_unilateral.csv','FileType','text','Delimiter',',');
 expRefs = expRefs.expRef;
 mouseName = cellfun(@(e)e{3},cellfun(@(s) strsplit(s,'_'), expRefs,'uni',0),'uni',0);
-[names,~,subjID] = unique(mouseName);
+[mice,~,subjID] = unique(mouseName);
 
 %Load standard coordset
 load('26CoordSet.mat','coordSet');
@@ -57,6 +57,10 @@ for i = 1:size(coordSet,1)
     id = D.laserCoord(:,1) == coordSet(i,1) & D.laserCoord(:,2) == coordSet(i,2);
     D.laserIdx(id) = i;
 end
+
+%Save the data somewhere
+save('.\data\sparse_unilateral.mat','D','mice');
+
 
 %% Plot map on CL=CR condition
 D = getrow(D, D.stimulus(:,1) == D.stimulus(:,2) & D.stimulus(:,1)>0);
@@ -196,6 +200,8 @@ clear all;
 
 expRefs = readtable('./sessionList_pulse.csv','FileType','text','Delimiter',',');
 expRefs = expRefs.expRef;
+mouseName = cellfun(@(e)e{3},cellfun(@(s) strsplit(s,'_'), expRefs,'uni',0),'uni',0);
+[mice,~,subjID] = unique(mouseName);
 
 D = struct;
 ii=1;
@@ -203,6 +209,7 @@ for session = 1:length(expRefs)
     dd = loadData(expRefs{session});
     dd = structfun(@(x)(x(6:(end-14),:)),dd,'uni',0); %trim first 5 trials and last 15
     dd.sessionID = ones(length(dd.response),1)*ii;
+    dd.subjectID = ones(length(dd.response),1)*subjID(session);
     
     %Add extra inactivation labels
     dd.laserRegion(dd.laserCoord(:,1)==0.5 & dd.laserCoord(:,2)==-2) = 'RightRSP';
@@ -245,6 +252,9 @@ for sess = 1:max(D.sessionID)
 end
 D = getrow(D, D.keepIdx==1);
 
+%Save the data somewhere
+save('.\data\galvo_pulse.mat','D','mice');
+
 %get non-laser RT and performance
 NL =  getrow(D, (D.CR_gt_CL | D.CL_gt_CR) & D.laserType==0 );
 VIS = getrow(D, (D.laserRegion == 'LeftVIS' & D.CR_gt_CL) | (D.laserRegion == 'RightVIS' & D.CL_gt_CR) );
@@ -264,13 +274,15 @@ subplot(2,2,4); hold on; line([-1 1]*0.3, [1 1]*median(NL.RT(NL.feedbackType==1)
 
 tsteps = linspace(-0.3,0.3,1000);
 perf = nan(2,1000);
+perf_ci = nan(2,1000,2);
 rt = nan(2,1000);
 for t = 1:length(tsteps)
 %     %VIS
     idx = WithinRanges(VIS.laserOnset, tsteps(t) + [-0.5 0.5]*window_sec);
     [counts,~,pVal] = crosstab( [NL.feedbackType; VIS.feedbackType(idx==1)], [NL.laserType; VIS.laserType(idx==1)]);
-    prob = counts./sum(counts,1);
-    perf(1,t) = prob(2,2);
+%     prob = counts./sum(counts,1);
+%     perf(1,t) = prob(2,2);
+    [perf(1,t),perf_ci(1,t,:)] = binofit(counts(2,2),sum(counts(:,2)));
     if pVal<alpha
         subplot(2,2,2);
         plot(tsteps(t), 0.8,'bo');
@@ -286,8 +298,83 @@ for t = 1:length(tsteps)
     %M2
     idx = WithinRanges(M2.laserOnset, tsteps(t) + [-0.5 0.5]*window_sec);
     [counts,~,pVal] = crosstab( [NL.feedbackType; M2.feedbackType(idx==1)], [NL.laserType; M2.laserType(idx==1)]);
+%     prob = counts./sum(counts,1);
+%     perf(2,t) = prob(2,2);
+    [perf(2,t),perf_ci(2,t,:)] = binofit(counts(2,2),sum(counts(:,2)));
+    if pVal<alpha
+        subplot(2,2,2);
+        plot(tsteps(t), 0.7,'ro');
+    end
+    
+    pVal = ranksum( NL.RT(NL.feedbackType==1), M2.RT(idx & M2.feedbackType==1), 'tail', 'left' );
+    rt(2,t) = median( M2.RT(idx & M2.feedbackType==1) );
+    if pVal<alpha
+        subplot(2,2,4);
+        plot(tsteps(t), 0.3,'ro');
+    end
+    
+end
+
+subplot(2,2,2);
+plot(tsteps, perf(1,:), 'b'); 
+fill([tsteps fliplr(tsteps)],[perf_ci(1,:,1) fliplr(perf_ci(1,:,2))],'k','FaceColor','b', 'EdgeAlpha', 0, 'FaceAlpha', 0.3);
+plot(tsteps, perf(2,:), 'r'); 
+fill([tsteps fliplr(tsteps)],[perf_ci(2,:,1) fliplr(perf_ci(2,:,2))],'k','FaceColor','r', 'EdgeAlpha', 0, 'FaceAlpha', 0.3);
+xlim([-1 1]*0.3); xlabel('Stim onset'); ylabel('Performance');
+
+subplot(2,2,4);
+plot(tsteps,rt); xlim([-1 1]*0.3); xlabel('Stim onset'); ylabel('Median RT');
+
+%% Bar graph over time
+
+window_sec = 0.1;
+alpha = 0.0001;
+
+% M2.RT(M2.laserOnset>0.1)=0.4;
+
+figure;
+subplot(2,2,2); hold on; line([-1 1]*0.3, [1 1]*mean(NL.feedbackType),'Color',[0 0 0])
+subplot(2,2,4); hold on; line([-1 1]*0.3, [1 1]*median(NL.RT(NL.feedbackType==1)),'Color',[0 0 0])
+
+
+tsteps = linspace(-0.3,0.3,11);
+perf = nan(2,10);
+rt = nan(2,10);
+for t = 1:length(tsteps)
+%     %VIS
+    idx = WithinRanges(VIS.laserOnset, tsteps(t) + [-0.5 0.5]*window_sec);
+    [counts,~,pVal] = crosstab( [NL.feedbackType; VIS.feedbackType(idx==1)], [NL.laserType; VIS.laserType(idx==1)]);
+    prob = counts./sum(counts,1);
+    perf(1,t) = prob(2,2);
+
+    subplot(2,2,2);
+    bx=bar(tsteps(t), prob(2,2), 0.05, 'BaseValue',mean(NL.feedbackType),'FaceColor',[0 0 1], 'FaceAlpha',0.3, 'EdgeAlpha',0. );
+    [~,pci]=binofit( counts(2,2), sum(counts(:,2)) );
+    lx=line([1 1]*tsteps(t), pci, 'linewidth',5, 'color', [0 0 1 0.3]);
+    if pVal<alpha
+        subplot(2,2,2);
+        plot(tsteps(t), 0.8,'bo');
+    end
+    
+    pVal = ranksum( NL.RT(NL.feedbackType==1), VIS.RT(idx & VIS.feedbackType==1), 'tail', 'left');
+    rt(1,t) = median( VIS.RT(idx & VIS.feedbackType==1) );
+    subplot(2,2,4);
+    bx=bar(tsteps(t), rt(1,t), 0.05, 'BaseValue',median(NL.RT(NL.feedbackType==1)));
+    line([1 1]*tsteps(t), rt(1,t) + [-1 1]*mad(VIS.RT(idx & VIS.feedbackType==1),1), 'linewidth',5, 'color', 'k')
+    if pVal<alpha
+        subplot(2,2,4);
+        plot(tsteps(t), 0.31,'bo');
+    end
+    
+    %M2
+    idx = WithinRanges(M2.laserOnset, tsteps(t) + [-0.5 0.5]*window_sec);
+    [counts,~,pVal] = crosstab( [NL.feedbackType; M2.feedbackType(idx==1)], [NL.laserType; M2.laserType(idx==1)]);
     prob = counts./sum(counts,1);
     perf(2,t) = prob(2,2);
+    subplot(2,2,2);
+    bx=bar(tsteps(t), prob(2,2), 0.05, 'BaseValue',mean(NL.feedbackType),'FaceColor',[1 0 0], 'FaceAlpha',0.3, 'EdgeAlpha',0 );
+    [~,pci]=binofit( counts(2,2), sum(counts(:,2)) );
+    lx=line([1 1]*tsteps(t), pci, 'linewidth',5, 'color', [1 0 0 0.3]);
     if pVal<alpha
         subplot(2,2,2);
         plot(tsteps(t), 0.7,'ro');
@@ -307,13 +394,12 @@ plot(tsteps, perf); xlim([-1 1]*0.3); xlabel('Stim onset'); ylabel('Performance'
 
 subplot(2,2,4);
 plot(tsteps,rt); xlim([-1 1]*0.3); xlabel('Stim onset'); ylabel('Median RT');
-
 %% Get multi-power inactivation data
 clear all;
 expRefs = readtable('./sessionList_unilateral_multiple_powers.csv','FileType','text','Delimiter',',');
 expRefs = expRefs.expRef;
 mouseName = cellfun(@(e)e{3},cellfun(@(s) strsplit(s,'_'), expRefs,'uni',0),'uni',0);
-[names,~,subjID] = unique(mouseName);
+[mice,~,subjID] = unique(mouseName);
 
 D = struct;
 ii=1;
@@ -363,14 +449,36 @@ for sess = 1:max(D.sessionID)
 end
 D = getrow(D, D.keepIdx==1);
 
+save('.\data\galvo_multipower.mat','D','mice');
+
 %% Fit multi-level model, or load previous fit already
-perturbationRegion = {'LeftVIS','RightVIS','LeftM2','RightM2','LeftM1','RightM1','LeftS1','RightS1'};
+perturbationRegion = {'LeftVIS','RightVIS','LeftM2','RightM2'};
 D1 = getrow(D, any(D.laserRegion == perturbationRegion,2) | D.laserType==0);
+
+%Hard-coded firing rates
+fr_vis_contra = @(c_contra) 1 + 7.83*c_contra.^0.74;
+fr_mos_contra = @(c_contra) 1 + 2.66*c_contra.^0.41;
+fr_vis_ipsi   = @(c_ipsi) 1 + 0*c_ipsi.^0;
+fr_mos_ipsi = @(c_ipsi) 1 + 0.33*c_ipsi.^0.56;
+
+%1) only contra-lateral stimulus has firing
+%Generate firing rate
+D1.firing_rate = nan(length(D1.response), 4);
+%Left VIS
+D1.firing_rate(:,1) = fr_vis_contra(D1.stimulus(:,2)) .* ~(D1.laserRegion=='LeftVIS');
+%Right VIS
+D1.firing_rate(:,2) = fr_vis_contra(D1.stimulus(:,1)) .* ~(D1.laserRegion=='RightVIS');
+%Left M2
+D1.firing_rate(:,3) = fr_mos_contra(D1.stimulus(:,2)) .* ~(D1.laserRegion=='LeftM2');
+%Right M2
+D1.firing_rate(:,4) = fr_mos_contra(D1.stimulus(:,1)) .* ~(D1.laserRegion=='RightM2');
+
 dat = struct('contrastLeft', D1.stimulus(:,1),...
               'contrastRight', D1.stimulus(:,2),...
               'choice', D1.response,...
               'sessionID', D1.sessionID,...
-              'subjectID', D1.subjectID);
+              'subjectID', D1.subjectID,...
+              'firing_rate',D1.firing_rate);
 dat.perturbation = zeros(size(dat.choice));
 for p = 1:length(perturbationRegion)
     dat.perturbation(D1.laserRegion == perturbationRegion{p}) = p;
@@ -766,3 +874,158 @@ hold on; plot(stim, mean(zl',2), 'ko--');
 subplot(2,2,4);
 plot(stim, zr, 'o-');xlabel('CL'); ylabel('Log pR/pNG');
 hold on; plot(stim, mean(zr',1), 'ko--');
+
+
+%% Plot mechanistic model fit
+areaCols = [ 73 148 208;
+                141 179 206
+                119 172 66;
+             147 170 119]/255;
+         
+%Plot posterior
+% bplot.plotPosterior(fit_mech.posterior)
+
+CL = [linspace(1,0.1,200), linspace(0.1,0,400), zeros(1,600)];
+CR = [zeros(1,600), linspace(0,0.1,400) linspace(0.1,1,200)];
+firing_rate = nan(4, length(CL));
+firing_rate(1,:) = fr_vis_contra(CR);
+firing_rate(2,:) = fr_vis_contra(CL);
+firing_rate(3,:) = fr_mos_contra(CR);
+firing_rate(4,:) = fr_mos_contra(CL);
+
+%Non-laser global fit on detection trials
+NL_ph=bplot.MECH(fit_mech.posterior.w, firing_rate);
+% NL_ph=bplot.MECH_NESTED(fit.posterior.b_G ,fit.posterior.b_LR, fit.posterior.w_G, fit.posterior.w_LR, firing_rate);
+
+NL_phM=mean(NL_ph,1);
+NL_phQ=quantile(NL_ph,[0.025 0.975],1);
+%non-laser detection trial data
+idx=min([fit_mech.data.contrastLeft fit_mech.data.contrastRight],[],2)==0;
+cDiff = fit_mech.data.contrastRight(idx) - fit_mech.data.contrastLeft(idx);
+resp = fit_mech.data.choice(idx);
+perturb = fit_mech.data.perturbation(idx);
+sess = fit_mech.data.sessionID(idx);
+[counts,~,~,lab] = crosstab(cDiff,resp,perturb,sess);
+prob = counts./sum(counts,2);%Convert to probability over choices
+prob = nanmean(prob,4); %Average over sessions
+cDiffUnique=cellfun(@str2num,lab(1:size(prob,1),1));
+
+figure;
+ha = tight_subplot(4,3,0.01,0.05,[0.05 0.5]);
+for region = 1:4
+    
+    inact_firing_rate = firing_rate;
+    inact_firing_rate(region,:) = 0;
+    ph=bplot.MECH(fit_mech.posterior.w, inact_firing_rate);
+%     ph=bplot.MECH_NESTED(fit.posterior.b_G ,fit.posterior.b_LR, fit.posterior.w_G, fit.posterior.w_LR, inact_firing_rate);
+
+    phM=mean(ph,1);
+    phQ=quantile(ph,[0.025 0.975],1);
+
+    jj=1;
+    for r = [1 3 2]
+        hold( ha(3*(region-1) + jj), 'on');
+        fx = fill(ha(3*(region-1) + jj),[CR-CL fliplr(CR-CL)], [NL_phQ(1,:,r) fliplr( NL_phQ(2,:,r) ) ], 'k');
+        fx.FaceAlpha=0.3; fx.EdgeAlpha=0;
+        plot(ha(3*(region-1) + jj), CR-CL,NL_phM(1,:,r),'k-', 'linewidth', 1);
+        
+        fx = fill(ha(3*(region-1) + jj),[CR-CL fliplr(CR-CL)], [phQ(1,:,r) fliplr( phQ(2,:,r) ) ], 'r');
+        fx.FaceAlpha=0.3; fx.EdgeAlpha=0; fx.FaceColor = areaCols(region,:);
+        plot(ha(3*(region-1) + jj),CR-CL,phM(1,:,r),'-','Color',areaCols(region,:), 'linewidth', 1);
+%         
+        plot(ha(3*(region-1) + jj),cDiffUnique,prob(:,r,1),'k.','markersize',20);
+        plot(ha(3*(region-1) + jj),cDiffUnique,prob(:,r,1+region),'.','markersize',20,'Color',areaCols(region,:));
+%         
+        jj = jj + 1;
+    end
+    
+end
+set([ha],'xcolor','none','ycolor','none');
+set([ha(end-2)],'ycolor','k','xcolor','k','xticklabelmode','auto','yticklabelmode','auto')
+set(ha,'ylim',[0 1],'xlim',[-1 1]);
+title(ha(1),'pLeft');
+title(ha(2),'pNoGo');
+title(ha(3),'pRight');
+set(ha,'dataaspectratio',[1 1 1]);
+
+ha = tight_subplot(1,1,0.01,0.05,[0.55 0.05]);
+hold(ha,'on');
+for region = 1:4
+    mu = mean([fit_mech.posterior.w(:,2+region), fit_mech.posterior.w(:,2+4+region)],1);
+    Sigma = cov([fit_mech.posterior.w(:,2+region), fit_mech.posterior.w(:,2+4+region)]);
+    x1 = (mu(1) - 100*max(diag(Sigma))):0.01:(mu(1) + 100*max(diag(Sigma)));
+    x2 = (mu(2) - 100*max(diag(Sigma))):0.01:(mu(2) + 100*max(diag(Sigma)));
+    [X1,X2] = meshgrid(x1,x2);
+    F = mvnpdf([X1(:) X2(:)],mu,Sigma);
+    F = reshape(F,length(x2),length(x1));
+    [c1,c2]=contour(ha,x1,x2,F,8);
+    c2.LineColor = areaCols(region,:);
+    c2.LineWidth=1;
+end
+set(ha,'dataaspectratio',[1 1 1]);
+line(ha,[0 0],ylim(ha)); line(ha,xlim(ha),[0 0]);
+xlabel(ha,'w_L'); ylabel(ha,'w_R');
+set(ha,'XTickLabelMode','auto','YTickLabelMode','auto');
+
+%% IIA PLot
+
+[counts,~,~,lab] = crosstab(fit_mech.data.contrastLeft,...
+                            fit_mech.data.contrastRight,...
+                            fit_mech.data.choice,...
+                            fit_mech.data.perturbation,...
+                            fit_mech.data.sessionID);
+prob = counts./sum(counts,3);%Convert to probability over choices
+prob = nanmean(prob,5); %Average over sessions
+
+
+zl = log(prob(:,:,1,:)./prob(:,:,3,:));
+zr = log(prob(:,:,2,:)./prob(:,:,3,:));
+stim = cellfun(@(s) str2num(s),lab(1:4,1));
+
+figure;
+subplot(1,2,1);
+plot(stim, zl(:,:,1,1), 'o-'); xlabel('CL'); ylabel('Log pL/pNG');
+subplot(1,2,2);
+plot(stim, zr(:,:,1,1)', 'o-');xlabel('CR'); ylabel('Log pR/pNG');
+
+figure;
+regionLabels = {'LeftVIS','RightVIS','LeftM2','RightM2'};
+for region = 1:4
+    subplot(4,2,2*(region-1)+1);
+    plot(stim, zl(:,:,1,1+region), 'o-'); xlabel('CL'); ylabel('Log pL/pNG');
+    title(regionLabels{region});
+    subplot(4,2,2*(region-1)+2)
+    plot(stim, zr(:,:,1,1+region)', 'o-');xlabel('CR'); ylabel('Log pR/pNG');
+    title(regionLabels{region});
+end
+set(get(gcf,'children')','ylim',[-1 3])
+
+%% Fit pure behav model on all behav data from all three experiments together
+clear all;
+error('this fit does not work for some reason');
+D1 = load('.\data\sparse_unilateral.mat'); 
+D2 = load('.\data\galvo_pulse.mat');
+D3 = load('.\data\galvo_multipower.mat');
+
+dat1 = struct('contrastLeft', D1.D.stimulus(:,1),...
+    'contrastRight', D1.D.stimulus(:,2),...
+    'choice', D1.D.response,...
+    'sessionID', D1.D.sessionID,...
+    'subjectID', D1.D.subjectID);
+
+dat2 = struct('contrastLeft', D2.D.stimulus(:,1),...
+    'contrastRight', D2.D.stimulus(:,2),...
+    'choice', D2.D.response,...
+    'sessionID', D2.D.sessionID + max(dat1.sessionID),...
+    'subjectID', D2.D.subjectID + max(dat1.subjectID) );
+
+dat3 = struct('contrastLeft', D3.D.stimulus(:,1),...
+    'contrastRight', D3.D.stimulus(:,2),...
+    'choice', D3.D.response,...
+    'sessionID', D3.D.sessionID + max(dat2.sessionID),...
+    'subjectID', D3.D.subjectID + max(dat1.subjectID));
+
+D = addstruct(dat1,dat2);
+D = addstruct(D, dat3);
+
+fit = bfit.fitModel('Two-Level',D);
