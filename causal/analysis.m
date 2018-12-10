@@ -12,7 +12,16 @@ coordSet = [coordSet; -coordSet(:,1), coordSet(:,2)];
 D = struct;
 ii=1;
 for session = 1:length(expRefs)
-    dd = loadData(expRefs{session});
+    [dd,meta] = loadData(expRefs{session});
+    
+    p = load(strrep(meta.blockFile, 'Block', 'parameters'));
+    fprintf('Inter-trial delay: %0.1f\n', p.parameters.interTrialDelay);
+    fprintf('Pre-stim quiesence: %0.1f - %0.1f \n', p.parameters.preStimQuiescentPeriod(1),  p.parameters.preStimQuiescentPeriod(2));
+    fprintf('Post-stim delay to go cue: %0.1f \n', p.parameters.cueInteractiveDelay);
+        fprintf('Negative feedback sound duration: %0.1f  \n', p.parameters.negFeedbackSoundDuration);
+
+    fprintf('\n');
+
     dd = structfun(@(x)(x(6:(end-14),:)),dd,'uni',0); %trim first 5 trials and last 15
     dd.sessionID = ones(length(dd.response),1)*ii;
     dd.subjectID = ones(length(dd.response),1)*subjID(session);
@@ -61,7 +70,7 @@ end
 %Save the data somewhere
 save('.\data\sparse_unilateral.mat','D','mice');
 
-fit = load("C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\sparse_unilateral.mat");
+% fit = load("C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\sparse_unilateral.mat");
 
 %% Plot map on CL=CR condition
 D = getrow(D, D.stimulus(:,1) == D.stimulus(:,2) & D.stimulus(:,1)>0);
@@ -77,11 +86,67 @@ prob = counts./sum(counts,1);%Convert to probability over choices
 %Compute delta from the non-laser condition
 deltaProb = prob(:,2:end,:) - prob(:,1,:);
 deltaProb = nanmean(deltaProb,3); %Average over sessions
+% 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%% Plot map of choice effects %%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+load('ctxOutlines.mat','coords');
+figure('color','w');
+for r = 1:3
+    subplot(1,3,r); hold on;
+    for q = 1:numel(coords) % coords is from ctxOutlines.mat
+        cx = coords(q).x/100 - 5.7;
+        cy = coords(q).y/100 - 5.4;
+        plot(cx,-cy, 'LineWidth', 0.5, 'Color', [1 1 1]*0.5, 'Tag', 'outline');
+    end
+    
+    %plot NS points as small dots
+    h=scatter(coordSet(:,1),coordSet(:,2),100,'k','o','filled'); axis equal;  drawnow;
+    h.MarkerEdgeColor=[1 1 1]*0.75;
+    h.CData = deltaProb(r,:);
+    
+    caxis([-1 1]*0.8);
+    set(gca,'xtick','','ytick','','xcolor','w','ycolor','w','xlim',[-1 1]*5.2,'ylim',[-5 4]);
+end
+cmap = [ linspace(0,1,100)' linspace(0,1,100)' ones(100,1);
+    ones(100,1) linspace(1,0,100)' linspace(1,0,100)'];
+colormap(cmap);
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%% Plot map of contraversive and ipsiversive effects %%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Contraversive: L hemi, change in R choices. R hemi, change in L choices
+hemi = sign(coordSet(:,1)); %-1 Left, +1 Right
+dContra = mean([deltaProb(2, hemi==-1); deltaProb(1, hemi==+1)],1);
+dIpsi = mean([deltaProb(1, hemi==-1); deltaProb(2, hemi==+1)],1);
+
+plotVals = [dContra dContra; dIpsi dIpsi];
+figure('color','w');
+for r = 1:2
+    subplot(1,2,r); hold on;
+    for q = 1:numel(coords) % coords is from ctxOutlines.mat
+        cx = coords(q).x/100 - 5.7;
+        cy = coords(q).y/100 - 5.4;
+        plot(cx,-cy, 'LineWidth', 0.5, 'Color', [1 1 1]*0.5, 'Tag', 'outline');
+    end
+    
+    %plot NS points as small dots
+    h=scatter(coordSet(:,1),coordSet(:,2),100,'k','o','filled'); axis equal;  drawnow;
+    h.MarkerEdgeColor=[1 1 1]*0.75;
+    h.CData = plotVals(r,:)';
+    
+    caxis([-1 1]*0.8);
+    set(gca,'xtick','','ytick','','xcolor','w','ycolor','w','xlim',[-1 1]*5.2,'ylim',[-5 4]);
+end
+cmap = [ linspace(0,1,100)' linspace(0,1,100)' ones(100,1);
+    ones(100,1) linspace(1,0,100)' linspace(1,0,100)'];
+colormap(cmap);
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%% Compute sampling distribution of null: no change in choices %%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-numIter = 5000;
+numIter = 10000;
 shufDeltaProb = nan(3,52,numIter);
 f = waitbar(0,'Please wait...');
 for i = 1:numIter
@@ -265,7 +330,13 @@ mouseName = cellfun(@(e)e{3},cellfun(@(s) strsplit(s,'_'), expRefs,'uni',0),'uni
 D = struct;
 ii=1;
 for session = 1:length(expRefs)
-    dd = loadData(expRefs{session});
+    [dd,meta] = loadData(expRefs{session});
+    
+        p = load(strrep(meta.blockFile, 'Block', 'parameters'));
+%     fprintf('Pre-stim quiesence: %0.1f \n', p.parameters.preStimQuiescentPeriod);
+    fprintf('Post-stim delay to go cue: %0.1f \n', p.parameters.interactiveDelay);
+    fprintf('\n');
+    
     dd = structfun(@(x)(x(6:(end-14),:)),dd,'uni',0); %trim first 5 trials and last 15
     dd.sessionID = ones(length(dd.response),1)*ii;
     dd.subjectID = ones(length(dd.response),1)*subjID(session);
@@ -327,6 +398,7 @@ D = getrow(D, D.keepIdx==1);
 NL =  getrow(D, (D.CR_gt_CL | D.CL_gt_CR) & D.laserType==0 );
 VIS = getrow(D, (D.laserRegion == 'LeftVIS' & D.CR_gt_CL) | (D.laserRegion == 'RightVIS' & D.CL_gt_CR) );
 M2 = getrow(D, (D.laserRegion == 'LeftM2' & D.CR_gt_CL) | (D.laserRegion == 'RightM2' & D.CL_gt_CR) );
+M1 = getrow(D, (D.laserRegion == 'LeftM1' & D.CR_gt_CL) | (D.laserRegion == 'RightM1' & D.CL_gt_CR) );
 
 %% Sliding window performance and RT
 
@@ -347,9 +419,9 @@ perf_ci = nan(2,1000,2);
 nogo = nan(2,1000);
 nogo_ci = nan(2,1000,2);
 rt = nan(2,1000);
-rt_ci = nan(2,1000,2);
+rt_ci = zeros(2,1000,2);
 for t = 1:length(tsteps)
-%     %VIS
+    %VIS
     idx = WithinRanges(VIS.laserOnset, tsteps(t) + [-0.5 0.5]*window_sec);
     [counts,~,pVal] = crosstab( [NL.feedbackType; VIS.feedbackType(idx==1)], [NL.laserType; VIS.laserType(idx==1)]);
     [perf(1,t),perf_ci(1,t,:)] = binofit(counts(2,2),sum(counts(:,2)));
@@ -398,7 +470,6 @@ for t = 1:length(tsteps)
         subplot(3,2,6);
         plot(tsteps(t), 0.3,'ro');
     end
-    
 end
 
 subplot(3,2,2);
@@ -421,7 +492,57 @@ plot(tsteps,rt(1,:),'b');
 fill([tsteps fliplr(tsteps)],[rt_ci(1,:,1) fliplr(rt_ci(1,:,2))],'k','FaceColor','b', 'EdgeAlpha', 0, 'FaceAlpha', 0.3);
 plot(tsteps,rt(2,:),'r');
 fill([tsteps fliplr(tsteps)],[rt_ci(2,:,1) fliplr(rt_ci(2,:,2))],'k','FaceColor','r', 'EdgeAlpha', 0, 'FaceAlpha', 0.3);
- xlim([-1 1]*0.3); xlabel('Stim onset'); ylabel('Median RT');
+xlim([-1 1]*0.3); xlabel('Stim onset'); ylabel('Median RT');
+ 
+%% Plot pulse for other regions
+A = {VIS, M2, M1};
+
+figure;
+% ha = tight_subplot(3,2,0.1,0.1,0.1);
+% for i = 1:length(ha); hold(ha(i),'on'); end;
+% 
+
+
+subplot(3,2,2); hold on; line([-1 1]*0.3, [1 1]*mean(NL.feedbackType),'Color',[0 0 0])
+subplot(3,2,4); hold on; line([-1 1]*0.3, [1 1]*median(NL.RT(NL.feedbackType==1)),'Color',[0 0 0])
+
+tsteps = linspace(-0.1,0.3,1000);
+perf = nan(1,1000);
+perf_ci = nan(1,1000,2);
+nogo = nan(1,1000);
+nogo_ci = nan(1,1000,2);
+rt = nan(1,1000);
+rt_ci = zeros(1,1000,2);
+for t = 1:length(tsteps)
+    %M1
+    idx = WithinRanges(M1.laserOnset, tsteps(t) + [-0.5 0.5]*window_sec);
+    [counts,~,pVal] = crosstab( [NL.feedbackType; M1.feedbackType(idx==1)], [NL.laserType; M1.laserType(idx==1)]);
+    [perf(1,t),perf_ci(1,t,:)] = binofit(counts(2,2),sum(counts(:,2)));
+    if pVal<alpha
+        subplot(3,2,2);
+        plot(tsteps(t), 0.8,'bo');
+    end
+    
+    pVal = ranksum( NL.RT(NL.feedbackType==1), M1.RT(idx & M1.feedbackType==1), 'tail', 'left');
+    rt_vals = M1.RT(idx & M1.feedbackType==1);
+    rt(1,t) = median( rt_vals );
+    rt_ci(1,t,:) = median( rt_vals ) + tinv([0.025  0.975],length(rt_vals)-1)*std(rt_vals)/sqrt(length(rt_vals));
+    if pVal<alpha
+        subplot(3,2,4);
+        plot(tsteps(t), 0.31,'bo');
+    end
+  
+end
+
+subplot(3,2,2);
+plot(tsteps, perf(1,:), 'k'); 
+fill([tsteps fliplr(tsteps)],[perf_ci(1,:,1) fliplr(perf_ci(1,:,2))],'k','FaceColor','k', 'EdgeAlpha', 0, 'FaceAlpha', 0.3);
+xlim([min(tsteps) max(tsteps)]); xlabel('Stim onset'); ylabel('Proportion correct');
+
+subplot(3,2,4);
+plot(tsteps,rt(1,:),'k');
+fill([tsteps fliplr(tsteps)],[rt_ci(1,:,1) fliplr(rt_ci(1,:,2))],'k','FaceColor','k', 'EdgeAlpha', 0, 'FaceAlpha', 0.3);
+xlim([min(tsteps) max(tsteps)]); xlabel('Stim onset'); ylabel('Median RT');
  
 %% Fit model to pulse data at bins
 perturbationRegion = {'LeftVIS','RightVIS','LeftM2','RightM2'};
@@ -493,7 +614,12 @@ mouseName = cellfun(@(e)e{3},cellfun(@(s) strsplit(s,'_'), expRefs,'uni',0),'uni
 D = struct;
 ii=1;
 for session = 1:length(expRefs)
-    dd = loadData(expRefs{session});
+    [dd,meta] = loadData(expRefs{session});
+           p = load(strrep(meta.blockFile, 'Block', 'parameters'));
+%     fprintf('Inter-trial delay: %0.1f\n', p.parameters.interTrialDelay);
+%     fprintf('Pre-stim quiesence: %0.1f \n', p.parameters.preStimQuiescentPeriod);
+    fprintf('Post-stim delay to go cue: %0.1f \n', p.parameters.interactiveDelay);
+    fprintf('\n');
     dd = structfun(@(x)(x(6:(end-14),:)),dd,'uni',0); %trim first 5 trials and last 15
     dd.sessionID = ones(length(dd.response),1)*ii;
     dd.subjectID = ones(length(dd.response),1)*subjID(session);
@@ -539,174 +665,844 @@ end
 D = getrow(D, D.keepIdx==1);
 
 save('.\data\galvo_multipower.mat','D','mice');
-
-%% Plot multi-power model-free stuff over VIS, M2, M1
-%%%%%%%%%%%%%%%%%%%%%REGION TESTING: chi2 test
-perturbationRegion = {'LeftVIS','RightVIS','LeftM2','RightM2','LeftM1','RightM1'};
-regionLabels = {'VIS','MOs','MOp'};
-areaCols = [ 73 148 208;
-             119 172 66;
-             100 100 100]/255;
-D2 = getrow(D, any(D.laserRegion == perturbationRegion,2) | D.laserType==0);
-D2.perturbation = zeros(size(D2.response));
-for p = 1:length(perturbationRegion)
-    D2.perturbation(D2.laserRegion == perturbationRegion{p}) = p;
-end
-
-D2 = getrow(D2,D2.stimulus(:,1)>=0.1 | D2.stimulus(:,2)>=0.1);
-
-
-%%%%%%%%% Compute empirical change in probability of moving contraversive
-%%%%%%%%% or ipsiversive for contralateral stimuli only 
-counts = crosstab(D2.response,...
-    D2.perturbation,...
-    D2.sessionID,...
-    D2.stimulus(:,1)>0,...
-    D2.stimulus(:,2)>0,...
-    D2.laserPower);
-prob = counts./sum(counts,1);
-dP = prob(:,2:end,:,:,:,2:end) - prob(:,1,:,:,:,1); %difference from no-laser condition
-dP = nanmean(dP,3); %avg over sessions
-dContraversive = nanmean([dP(1,2:2:end,:,2,1,:);... %change in Left choices on CL, when inactivating RIGHT hemisphere
-    dP(2,1:2:end,:,1,2,:)],1); %change in Right choices on CR, when inactivating LEFT hemisphere
-dIpsiversive = nanmean([dP(2,2:2:end,:,2,1,:);... %change in Right choices on CL, when inactivating RIGHT hemisphere
-    dP(1,1:2:end,:,1,2,:)],1); %change in Left choices on CR, when inactivating LEFT hemisphere
-dContraversive = permute(dContraversive,[2 6 1 3 4 5]); %rows regions, cols powers
-dIpsiversive = permute(dIpsiversive,[2 6 1 3 4 5]);
-
-%%%%%%%Compute null sampling distribution for no difference
-numIter = 5000;
-dContraversive_null = nan(3,3,numIter);
-dIpsiversive_null = nan(3,3,numIter);
-f = waitbar(0,'Please wait...');
-for i = 1:numIter
-    waitbar(i/numIter,f);
-    idx = 1:length(D2.laserIdx);
-    for sess = 1:max(D2.sessionID)
-        sessIdx = idx(D2.sessionID==sess);
-        sessIdx = sessIdx(randperm(length(sessIdx)));
-        idx(D2.sessionID==sess) = sessIdx;
-    end
-    
-    counts = crosstab(D2.response,...
-        D2.perturbation( idx ),...
-        D2.sessionID,...
-        D2.stimulus(:,1)>0,...
-        D2.stimulus(:,2)>0,...
-        D2.laserPower( idx )); %%%%<<<<< DO I ALSO WANT TO BE SHUFFLING LASER POWER?
-    prob = counts./sum(counts,1);
-    dP = prob(:,2:end,:,:,:,2:end) - prob(:,1,:,:,:,1); %difference from no-laser condition
-    dP = nanmean(dP,3); %avg over sessions
-    dC = nanmean([dP(1,2:2:end,:,2,1,:);... %change in Left choices on CL, when inactivating RIGHT hemisphere
-        dP(2,1:2:end,:,1,2,:)],1); %change in Right choices on CR, when inactivating LEFT hemisphere
-    dI = nanmean([dP(2,2:2:end,:,2,1,:);... %change in Right choices on CL, when inactivating RIGHT hemisphere
-        dP(1,1:2:end,:,1,2,:)],1); %change in Left choices on CR, when inactivating LEFT hemisphere
-    dContraversive_null(:,:,i) = permute(dC,[2 6 1 3 4 5]); %rows regions, cols powers
-    dIpsiversive_null(:,:,i) = permute(dI,[2 6 1 3 4 5]);
-end
-f.delete;
+% %% Multi-power: model-free statistical testing of laser effects
 % 
-% %%%%%%Plot change in probability, overlaying pvalues
+% %%%%%%%%%%% GET DATA %%%%%%%%%%%%%%
+% perturbationRegion = {'LeftVIS','RightVIS','LeftM2','RightM2','LeftM1','RightM1'};
+% regionLabels = {'VIS','MOs','MOp'};
+% areaCols = [ 73 148 208;
+%              119 172 66;
+%              100 100 100]/255;
+% D2 = getrow(D, any(D.laserRegion == perturbationRegion,2) | D.laserType==0);
+% D2.perturbation = zeros(size(D2.response));
+% for p = 1:length(perturbationRegion)
+%     D2.perturbation(D2.laserRegion == perturbationRegion{p}) = p;
+% end
+
+% D2 = getrow(D2,D2.stimulus(:,1)>=0.1 | D2.stimulus(:,2)>=0.1);
+% 
+% %%%%%%%%%%% EFFECT ON FRACTION OF CHOICES %%%%%%%%%%%%%%
+% 
+% %%%%%%%%% Compute empirical change in probability of moving contraversive
+% %%%%%%%%% or ipsiversive for contralateral stimuli only 
+[counts,~,~,labels] = crosstab(D2.stimulus(:,1),...
+    D2.stimulus(:,2),...
+    D2.response,...
+    D2.perturbation,...
+    D2.laserPower,...
+    D2.sessionID);
+% prob = counts./sum(counts,1);
+% dP = prob(:,2:end,:,:,:,2:end) - prob(:,1,:,:,:,1); %difference from no-laser condition
+% dP = nanmean(dP,3); %avg over sessions
+% dContraversive = nanmean([dP(1,2:2:end,:,2,1,:);... %change in Left choices on CL, when inactivating RIGHT hemisphere
+%     dP(2,1:2:end,:,1,2,:)],1); %change in Right choices on CR, when inactivating LEFT hemisphere
+% dIpsiversive = nanmean([dP(2,2:2:end,:,2,1,:);... %change in Right choices on CL, when inactivating RIGHT hemisphere
+%     dP(1,1:2:end,:,1,2,:)],1); %change in Left choices on CR, when inactivating LEFT hemisphere
+% dContraversive = permute(dContraversive,[2 6 1 3 4 5]); %rows regions, cols powers
+% dIpsiversive = permute(dIpsiversive,[2 6 1 3 4 5]);
+% 
+% %%%%%%%Compute null sampling distribution for no difference
+% numIter = 10000;
+% dContraversive_null = nan(3,3,numIter);
+% dIpsiversive_null = nan(3,3,numIter);
+% f = waitbar(0,'Please wait...');
+% for i = 1:numIter
+%     waitbar(i/numIter,f);
+%     idx = 1:length(D2.laserIdx);
+%     for sess = 1:max(D2.sessionID)
+%         sessIdx = idx(D2.sessionID==sess);
+%         sessIdx = sessIdx(randperm(length(sessIdx)));
+%         idx(D2.sessionID==sess) = sessIdx;
+%     end
+%     
+%     counts = crosstab(D2.response,...
+%         D2.perturbation( idx ),...
+%         D2.sessionID,...
+%         D2.stimulus(:,1)>0,...
+%         D2.stimulus(:,2)>0,...
+%         D2.laserPower( idx )); %%%%<<<<< DO I ALSO WANT TO BE SHUFFLING LASER POWER?
+%     prob = counts./sum(counts,1);
+%     dP = prob(:,2:end,:,:,:,2:end) - prob(:,1,:,:,:,1); %difference from no-laser condition
+%     dP = nanmean(dP,3); %avg over sessions
+%     dC = nanmean([dP(1,2:2:end,:,2,1,:);... %change in Left choices on CL, when inactivating RIGHT hemisphere
+%         dP(2,1:2:end,:,1,2,:)],1); %change in Right choices on CR, when inactivating LEFT hemisphere
+%     dI = nanmean([dP(2,2:2:end,:,2,1,:);... %change in Right choices on CL, when inactivating RIGHT hemisphere
+%         dP(1,1:2:end,:,1,2,:)],1); %change in Left choices on CR, when inactivating LEFT hemisphere
+% %     dContraversive_null(:,1,i) = permute(dC,[2 6 1 3 4 5]); %rows regions, cols powers
+% %     dIpsiversive_null(:,1,i) = permute(dI,[2 6 1 3 4 5]);
+%     
+%     dContraversive_null(:,:,i) = permute(dC,[2 6 1 3 4 5]); %rows regions, cols powers
+%     dIpsiversive_null(:,:,i) = permute(dI,[2 6 1 3 4 5]);
+% end
+% f.delete;
+% % 
+% % %%%%%%Plot change in probability, overlaying pvalues
+% % figure('color','w');
+% % for region = 1:3
+% %     subplot(1,2,1); hold on;
+% %     plot(region + [-1 0 1]*0.2, dContraversive(region,:),'.-','markersize',20);
+% %     null = squeeze(dContraversive_null(region,:,:))';
+% %     pVal = min(mean(dContraversive(region,:) <= null,1), mean(dContraversive(region,:) >= null,1));
+% %     text(region + [-1 0 1]*0.2, dContraversive(region,:),arrayfun(@(n) num2str(n),pVal,'uni',0) );
+% %     
+% %     subplot(1,2,2); hold on;
+% %     plot(region + [-1 0 1]*0.2, dIpsiversive(region,:),'.-','markersize',20);
+% %     null = squeeze(dIpsiversive_null(region,:,:))';
+% %     pVal = min(mean(dIpsiversive(region,:) <= null,1), mean(dIpsiversive(region,:) >= null,1));
+% %     text(region + [-1 0 1]*0.2, dIpsiversive(region,:),arrayfun(@(n) num2str(n),pVal,'uni',0) );
+% % end
+% % set(get(gcf,'children'),'xtick',1:3,'xticklabel',regionLabels);
+% % 
+% % 
+% 
+% %%%%%%Plot absolute probabilities, overlaying pvalues
+% counts = crosstab(D2.response,...
+%     D2.perturbation,...
+%     D2.sessionID,...
+%     D2.stimulus(:,1)>0,...
+%     D2.stimulus(:,2)>0,...
+%     D2.laserPower);
+% prob = counts./sum(counts,1);
+% prob_ave = nanmean(prob,3);
+% pContraNL = nanmean([prob_ave(1,1,1,2,1,1);... % Left choices on CL
+%                      prob_ave(2,1,1,1,2,1)],1); %Right choices on CR
+% pIpsiNL = nanmean([prob_ave(2,1,1,2,1,1);... % Right choices on CL
+%                      prob_ave(1,1,1,1,2,1)],1); %Left choices on CR
+% 
+% prob_ave = prob_ave(:,2:end,:,:,:,2:end);
+% pContraversive = nanmean([prob_ave(1,2:2:end,:,2,1,:);... % Left choices on CL, when inactivating RIGHT hemisphere
+%     prob_ave(2,1:2:end,:,1,2,:)],1); %Right choices on CR, when inactivating LEFT hemisphere
+% pIpsiversive = nanmean([prob_ave(2,2:2:end,:,2,1,:);... %Right choices on CL, when inactivating RIGHT hemisphere
+%     prob_ave(1,1:2:end,:,1,2,:)],1); %Left choices on CR, when inactivating LEFT hemisphere
+% pContraversive = permute(pContraversive,[2 6 1 3 4 5]); %rows regions, cols powers
+% pIpsiversive = permute(pIpsiversive,[2 6 1 3 4 5]);
+% 
 % figure('color','w');
+% subplot(1,2,1); hold on; line([1 3],[1 1]*pContraNL);
+% subplot(1,2,2); hold on; line([1 3],[1 1]*pIpsiNL);
 % for region = 1:3
-%     subplot(1,2,1); hold on;
-%     plot(region + [-1 0 1]*0.2, dContraversive(region,:),'.-','markersize',20);
+% 	subplot(1,2,1); hold on;
+%     h=plot( region + [-1 0 1]*0.2, pContraversive(region,:),'.-','markersize',20)
 %     null = squeeze(dContraversive_null(region,:,:))';
 %     pVal = min(mean(dContraversive(region,:) <= null,1), mean(dContraversive(region,:) >= null,1));
-%     text(region + [-1 0 1]*0.2, dContraversive(region,:),arrayfun(@(n) num2str(n),pVal,'uni',0) );
+%     text(region + [-1 0 1]*0.2, pContraversive(region,:),arrayfun(@(n) num2str(n),pVal,'uni',0) );
 %     
 %     subplot(1,2,2); hold on;
-%     plot(region + [-1 0 1]*0.2, dIpsiversive(region,:),'.-','markersize',20);
+%     plot( region + [-1 0 1]*0.2, pIpsiversive(region,:),'.-','markersize',20)
 %     null = squeeze(dIpsiversive_null(region,:,:))';
 %     pVal = min(mean(dIpsiversive(region,:) <= null,1), mean(dIpsiversive(region,:) >= null,1));
-%     text(region + [-1 0 1]*0.2, dIpsiversive(region,:),arrayfun(@(n) num2str(n),pVal,'uni',0) );
+%     text(region + [-1 0 1]*0.2, pIpsiversive(region,:),arrayfun(@(n) num2str(n),pVal,'uni',0) );
 % end
+% set(get(gcf,'children'),'ylim',[0 1]);
 % set(get(gcf,'children'),'xtick',1:3,'xticklabel',regionLabels);
 % 
+% %%%%%%%%%%% PAIRED TEST BETWEEN VIS AND M2 on IPSIVERSIVE CHOICES %%%%%%%%%%%%%%
+% counts = crosstab(D2.response,...
+%     D2.perturbation,...
+%     D2.sessionID,...
+%     D2.stimulus(:,1)>0,...
+%     D2.stimulus(:,2)>0);
+% prob = counts./sum(counts,1);
+% prob = nanmean(prob,3); %avg over sessions
+% prob(:,1,:,:,:) = []; %Delete nolaser 
+% pIpsiversive = nanmean([prob(2,2:2:end,:,2,1);... %Right choices on CL, when inactivating RIGHT hemisphere
+%     prob(1,1:2:end,:,1,2)],1); %Left choices on CR, when inactivating LEFT hemisphere
+% d = pIpsiversive(1) - pIpsiversive(2); %Difference in the ipsiversive rate between VIS and M2 inactivation
 % 
+% numIter = 10000;
+% d_null = nan(1,numIter);
+% f = waitbar(0,'Please wait...');
+% for i = 1:numIter
+%     waitbar(i/numIter,f);
+%     idx = 1:length(D2.laserIdx);
+%     for sess = 1:max(D2.sessionID)
+%         sessIdx = idx(D2.sessionID==sess);
+%         sessIdx = sessIdx(randperm(length(sessIdx)));
+%         idx(D2.sessionID==sess) = sessIdx;
+%     end
+%     
+%     counts = crosstab(D2.response,...
+%         D2.perturbation( idx ),...
+%         D2.sessionID,...
+%         D2.stimulus(:,1)>0,...
+%         D2.stimulus(:,2)>0);
+%     prob = counts./sum(counts,1);
+%     prob = nanmean(prob,3); %avg over sessions
+%     prob(:,1,:,:,:) = []; %Delete nolaser
+%     pIpsiversive = nanmean([prob(2,2:2:end,:,2,1);... %Right choices on CL, when inactivating RIGHT hemisphere
+%         prob(1,1:2:end,:,1,2)],1); %Left choices on CR, when inactivating LEFT hemisphere
+%     d_null(i) = pIpsiversive(1) - pIpsiversive(2); %Difference in the ipsiversive rate between VIS and M2 inactivation
+% end
+% pVal = min( mean(d >= d_null), mean(d <= d_null) );
+% disp('Test between VIS and M2 pooled over powers:');
+% disp(pVal);
+% f.delete;
+% 
+% 
+% 
+% 
+% % %%%%%%%%%%% EFFECT ON REACTION TIME %%%%%%%%%%%%%%
+% % [G,resp,pert,sess,cl,cr,pow] = findgroups(D2.response,...
+% %                                           D2.perturbation,...
+% %                                           D2.sessionID,...
+% %                                           D2.stimulus(:,1)>0,...
+% %                                           D2.stimulus(:,2)>0,...
+% %                                           D2.laserPower);
+% % rt = splitapply(@nanmedian,D2.RT,G); %Calculate median RT for each combination
+% % %reshape into useful array
+% % vars = {resp,pert,sess,cl,cr,pow};
+% % [~,~,vid] = cellfun(@(v) unique(v), vars, 'uni', 0);
+% % dim = cellfun(@(v) length(unique(v)), vars);
+% % RT = nan(dim); RT( sub2ind(dim,vid{1},vid{2},vid{3},vid{4},vid{5},vid{6}) ) = rt;
+% % RT = nanmean(RT, 3);%average over sessions
+% % RT = RT(:,2:end,:,:,:,2:end) - RT(:,1,:,:,:,1);% convert to difference from nolaser condition
+% % RTContra = nanmean([RT(1,2:2:end,:,2,1,:);... %change in Left choice RT on CL, when inactivating RIGHT hemisphere
+% %                     RT(2,1:2:end,:,1,2,:)],1); %change in Right choice RT on CR, when inactivating LEFT hemisphere
+% % RTIpsi = nanmean([RT(2,2:2:end,:,2,1,:);... %change in Right choice RT on CL, when inactivating RIGHT hemisphere
+% %                     RT(1,1:2:end,:,1,2,:)],1); %change in Left choice RT on CR, when inactivating LEFT hemisphere
+% % RTContra = permute(RTContra,[2 6 1 3 4 5]); %rows regions, cols powers
+% % RTIpsi = permute(RTIpsi,[2 6 1 3 4 5]);        
+% % 
+% % 
+% % 
+% % %Overlay P values by shuffling
+% % numIter = 5000;
+% % RTContra_null = nan(3,3,numIter);
+% % RTIpsi_null = nan(3,3,numIter);
+% % f = waitbar(0,'Please wait...');
+% % for i = 1:numIter
+% %     waitbar(i/numIter,f);
+% %     idx = 1:length(D2.laserIdx);
+% %     for sess = 1:max(D2.sessionID)
+% %         sessIdx = idx(D2.sessionID==sess);
+% %         sessIdx = sessIdx(randperm(length(sessIdx)));
+% %         idx(D2.sessionID==sess) = sessIdx;
+% %     end
+% %     
+% %     %%%%%%%%%% Compute empirical reaction times
+% %     [G,resp,pert,sess,cl,cr,pow] = findgroups(D2.response,...
+% %         D2.perturbation( idx ),...
+% %         D2.sessionID,...
+% %         D2.stimulus(:,1)>0,...
+% %         D2.stimulus(:,2)>0,...
+% %         D2.laserPower( idx ));
+% %     rt = splitapply(@nanmedian,D2.RT,G); %Calculate median RT for each combination
+% %     %reshape into useful array
+% %     vars = {resp,pert,sess,cl,cr,pow};
+% %     [~,~,vid] = cellfun(@(v) unique(v), vars, 'uni', 0);
+% %     dim = cellfun(@(v) length(unique(v)), vars);
+% %     RT = nan(dim); RT( sub2ind(dim,vid{1},vid{2},vid{3},vid{4},vid{5},vid{6}) ) = rt;
+% %     RT = nanmean(RT, 3);%average over sessions
+% %     RT = RT(:,2:end,:,:,:,2:end) - RT(:,1,:,:,:,1);% convert to difference from nolaser condition
+% %     RTC = nanmean([RT(1,2:2:end,:,2,1,:);... %change in Left choice RT on CL, when inactivating RIGHT hemisphere
+% %         RT(2,1:2:end,:,1,2,:)],1); %change in Right choice RT on CR, when inactivating LEFT hemisphere
+% %     RTI = nanmean([RT(2,2:2:end,:,2,1,:);... %change in Right choice RT on CL, when inactivating RIGHT hemisphere
+% %         RT(1,1:2:end,:,1,2,:)],1); %change in Left choice RT on CR, when inactivating LEFT hemisphere
+% %     RTContra_null(:,:,i) = permute(RTC,[2 6 1 3 4 5]); %rows regions, cols powers
+% %     RTIpsi_null(:,:,i) = permute(RTI,[2 6 1 3 4 5]);
+% % end
+% % f.delete;
+% % 
+% % figure('color','w');
+% % for region = 1:3
+% %     subplot(1,2,1); hold on;
+% %     plot(region + [-1 0 1]*0.2, RTContra(region,:),'.-','markersize',20);
+% %     null = squeeze(RTContra_null(region,:,:))';
+% %     pVal = min(mean(RTContra(region,:) <= null,1), mean(RTContra(region,:) >= null,1));
+% %     text(region + [-1 0 1]*0.2, RTContra(region,:),arrayfun(@(n) num2str(n),pVal,'uni',0) );
+% %     
+% %     subplot(1,2,2); hold on;
+% %     plot(region + [-1 0 1]*0.2, RTIpsi(region,:),'.-','markersize',20);
+% %     null = squeeze(RTIpsi_null(region,:,:))';
+% %     pVal = min(mean(RTIpsi(region,:) <= null,1), mean(RTIpsi(region,:) >= null,1));
+% %     text(region + [-1 0 1]*0.2, RTIpsi(region,:),arrayfun(@(n) num2str(n),pVal,'uni',0) );
+% % end
+% % set(get(gcf,'children'),'xtick',1:3,'xticklabel',regionLabels);
+% % 
+% %% Multi-power: model-free statistical testing of laser effects COMBINING POWERS
+% 
+% %%%%%%%%%%% GET DATA %%%%%%%%%%%%%%
+% perturbationRegion = {'LeftVIS','RightVIS','LeftM2','RightM2','LeftM1','RightM1'};
+% regionLabels = {'VIS','MOs','MOp'};
+% areaCols = [ 73 148 208;
+%              119 172 66;
+%              100 100 100]/255;
+% D2 = getrow(D, any(D.laserRegion == perturbationRegion,2) | D.laserType==0);
+% D2.perturbation = zeros(size(D2.response));
+% for p = 1:length(perturbationRegion)
+%     D2.perturbation(D2.laserRegion == perturbationRegion{p}) = p;
+% end
+% 
+% D2 = getrow(D2,D2.stimulus(:,1)>=0.1 | D2.stimulus(:,2)>=0.1);
+% 
+% %%%%%%%%%%% EFFECT ON FRACTION OF CHOICES %%%%%%%%%%%%%%
+% counts = crosstab(D2.response,...
+%     D2.perturbation,...
+%     D2.sessionID,...
+%     D2.stimulus(:,1)>0,...
+%     D2.stimulus(:,2)>0);
+% prob = counts./sum(counts,1);
+% pContraNL = nanmean([prob(1,1,:,2,1);... % Left choices on CL
+%                      prob(2,1,:,1,2)],1); %Right choices on CR
+% pIpsiNL = nanmean([prob(2,1,:,2,1);... % Right choices on CL
+%                      prob(1,1,:,1,2)],1); %Left choices on CR
+% pContraNL = squeeze(pContraNL);
+% pIpsiNL = squeeze(pIpsiNL);
+% 
+% prob = prob(:,2:end,:,:,:);
+% pContraversive_sess = nanmean([prob(1,2:2:end,:,2,1);... % Left choices on CL, when inactivating RIGHT hemisphere
+%     prob(2,1:2:end,:,1,2)],1); %Right choices on CR, when inactivating LEFT hemisphere
+% pIpsiversive_sess = nanmean([prob(2,2:2:end,:,2,1);... %Right choices on CL, when inactivating RIGHT hemisphere
+%     prob(1,1:2:end,:,1,2)],1); %Left choices on CR, when inactivating LEFT hemisphere
+% pContraversive_sess = squeeze(pContraversive_sess)';
+% pIpsiversive_sess = squeeze(pIpsiversive_sess)';
+% 
+% figure('color','w');
+% subplot(1,2,1); hold on;
+% bar(nanmean(pContraversive_sess,1),'BaseValue',nanmean(pContraNL),'EdgeAlpha',0); 
+% se = nanstd(pContraversive_sess,[],1)./sqrt(sum(~isnan(pContraversive_sess),1));
+% h=errorbar(1:3, nanmean(pContraversive_sess,1), se, 'LineStyle' ,'none');
+% for i = 1:3
+%     [H,Pval] = ttest(pContraNL,pContraversive_sess(:,i));
+%     text(i, nanmean(pContraversive_sess(:,i)), num2str(Pval) );
+% end
+% 
+% subplot(1,2,2); hold on;
+% bar(nanmean(pIpsiversive_sess,1),'BaseValue',nanmean(pIpsiNL),'EdgeAlpha',0); 
+% se = nanstd(pIpsiversive_sess,[],1)./sqrt(sum(~isnan(pIpsiversive_sess),1));
+% h=errorbar(1:3, nanmean(pIpsiversive_sess,1), se, 'LineStyle' ,'none');
+% for i = 1:3
+%     [H,Pval] = ttest(pIpsiNL,pIpsiversive_sess(:,i));
+%     text(i, nanmean(pIpsiversive_sess(:,i)), num2str(Pval) );
+% end
+% set(get(gcf,'children'),'ylim',[0 1]);
+% set(get(gcf,'children'),'xtick',1:3,'xticklabel',regionLabels);
+% 
+% %pairwise test between VIS and MOs ipsiversive
+% [~,Pval]=ttest( pIpsiversive_sess(:,1), pIpsiversive_sess(:,2));
+%     text(1.5, 0.5, num2str(Pval) );
+%% Multi-power: fisher exact test: per session + pooling across power
+ 
+%Test that inactivation significantly decreases contraversive choices
+region = {'VIS','M2','M1'};
+for reg = 1:3
+    pvals = nan(max(D.sessionID),1);
+    pChoice = nan(max(D.sessionID),2);
+    for sess = 1:max(D.sessionID)
+        d3 = getrow(D,D.sessionID==sess);
+        X = nan(2,2);
+        
+        X(1,1) =  sum( (d3.laserType==0 & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response==2)) | ...
+            (d3.laserType==0 & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response==1)) );
+        
+        X(2,1) =  sum( (d3.laserType==0 & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response~=2)) | ...
+            (d3.laserType==0 & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response~=1)) );
+        
+        X(1,2) =  sum( (d3.laserRegion==['Left' region{reg}] & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response==2)) | ...
+            (d3.laserRegion==['Right' region{reg}] & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response==1)) );
+        
+        X(2,2) =  sum( (d3.laserRegion==['Left' region{reg}] & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response~=2)) | ...
+            (d3.laserRegion==['Right' region{reg}] & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response~=1)) );
+        
+        [~,pvals(sess)] = fishertest(X); %Testing DECREASE
+        pChoice(sess,:) = X(1,:)./sum(X,1);
+    end
+    avg_pchoice = nanmean(pChoice,1);
+    chi_vals = -2.*log(pvals);
+    group_pval = 1 - chi2cdf(sum(chi_vals),2*length(pvals));
+    fprintf('Contraversive %s: %0.2f vs %0.2f  %0.10f\n',region{reg},avg_pchoice(1), avg_pchoice(2), group_pval);
+end
 
-%%%%%%Plot absolute probabilities, overlaying pvalues
-counts = crosstab(D2.response,...
-    D2.perturbation,...
-    D2.sessionID,...
-    D2.stimulus(:,1)>0,...
-    D2.stimulus(:,2)>0,...
-    D2.laserPower);
-prob = counts./sum(counts,1);
-prob_ave = nanmean(prob,3);
-pContraNL = nanmean([prob_ave(1,1,1,2,1,1);... % Left choices on CL
-                     prob_ave(2,1,1,1,2,1)],1); %Right choices on CR
-pIpsiNL = nanmean([prob_ave(2,1,1,2,1,1);... % Right choices on CL
-                     prob_ave(1,1,1,1,2,1)],1); %Left choices on CR
 
-prob_ave = prob_ave(:,2:end,:,:,:,2:end);
-pContraversive = nanmean([prob_ave(1,2:2:end,:,2,1,:);... % Left choices on CL, when inactivating RIGHT hemisphere
-    prob_ave(2,1:2:end,:,1,2,:)],1); %Right choices on CR, when inactivating LEFT hemisphere
-pIpsiversive = nanmean([prob_ave(2,2:2:end,:,2,1,:);... %Right choices on CL, when inactivating RIGHT hemisphere
-    prob_ave(1,1:2:end,:,1,2,:)],1); %Left choices on CR, when inactivating LEFT hemisphere
-pContraversive = permute(pContraversive,[2 6 1 3 4 5]); %rows regions, cols powers
-pIpsiversive = permute(pIpsiversive,[2 6 1 3 4 5]);
+
+%Test that inactivation significantly changes ipsiversive choices
+region = {'VIS','M2','M1'};
+for reg = 1:3
+    pvals = nan(max(D.sessionID),1);
+    pChoice = nan(max(D.sessionID),2);
+    for sess = 1:max(D.sessionID)
+        d3 = getrow(D,D.sessionID==sess);
+        X = nan(2,2);
+        
+        X(1,1) =  sum( (d3.laserType==0 & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response==1)) | ...
+            (d3.laserType==0 & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response==2)) );
+        
+        X(2,1) =  sum( (d3.laserType==0 & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response~=1)) | ...
+            (d3.laserType==0 & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response~=2)) );
+        
+        X(1,2) =  sum( (d3.laserRegion==['Left' region{reg}] & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response==1)) | ...
+            (d3.laserRegion==['Right' region{reg}] & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response==2)) );
+        
+        X(2,2) =  sum( (d3.laserRegion==['Left' region{reg}] & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response~=1)) | ...
+            (d3.laserRegion==['Right' region{reg}] & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response~=2)) );
+        
+        [~,pvals(sess)] = fishertest(X, 'tail', 'left'); %Testing INCREASE
+        pChoice(sess,:) = X(1,:)./sum(X,1);
+    end
+    avg_pchoice = nanmean(pChoice,1);
+    chi_vals = -2.*log(pvals);
+    group_pval = 1 - chi2cdf(sum(chi_vals),2*length(pvals));
+    fprintf('Ipsiversive %s: %0.2f vs %0.2f  %0.10f\n',region{reg},avg_pchoice(1), avg_pchoice(2), group_pval);
+end
+
+
+
+
+
+
+%Test that the rate of ipsiversive choices for VIS vs M2 inactivation
+pvals = nan(max(D.sessionID),1);
+pChoice = nan(max(D.sessionID),2);
+for sess = 1:max(D.sessionID)
+    d3 = getrow(D,D.sessionID==sess);
+    X = nan(2,2);
+      
+    X(1,1) =  sum( (d3.laserRegion=='LeftVIS' & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response==1)) | ...
+                   (d3.laserRegion=='RightVIS' & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response==2)) );
+    
+    X(2,1) =  sum( (d3.laserRegion=='LeftVIS' & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response~=1)) | ...
+                   (d3.laserRegion=='RightVIS' & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response~=2)) );
+   
+    X(1,2) =  sum( (d3.laserRegion=='LeftM2' & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response==1)) | ...
+                   (d3.laserRegion=='RightM2' & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response==2)) );
+    
+    X(2,2) =  sum( (d3.laserRegion=='LeftM2' & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response~=1)) | ...
+                   (d3.laserRegion=='RightM2' & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response~=2)) );
+       
+    [~,pvals(sess)] = fishertest(X,'tail','right');
+    pChoice(sess,:) = X(1,:)./sum(X,1);
+end
+avg_pchoice = nanmean(pChoice,1);
+chi_vals = -2.*log(pvals);
+group_pval = 1 - chi2cdf(sum(chi_vals),2*length(pvals));
+fprintf('Ipsiversive VIS vs MOs: %0.2f vs %0.2f %0.10f\n',avg_pchoice(1), avg_pchoice(2), group_pval);
+%% Multi-power: fisher exact test: per subject + pooling across power
+ 
+%Test that inactivation significantly decreases contraversive choices
+region = {'VIS','M2','M1'};
+for reg = 1:3
+    pvals = nan(max(D.subjectID),1);
+    pChoice = nan(max(D.subjectID),2);
+    for subj = 1:max(D.subjectID)
+        d3 = getrow(D,D.subjectID==subj);
+        X = nan(2,2);
+        
+        X(1,1) =  sum( (d3.laserType==0 & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response==2)) | ...
+            (d3.laserType==0 & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response==1)) );
+        
+        X(2,1) =  sum( (d3.laserType==0 & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response~=2)) | ...
+            (d3.laserType==0 & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response~=1)) );
+        
+        X(1,2) =  sum( (d3.laserRegion==['Left' region{reg}] & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response==2)) | ...
+            (d3.laserRegion==['Right' region{reg}] & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response==1)) );
+        
+        X(2,2) =  sum( (d3.laserRegion==['Left' region{reg}] & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response~=2)) | ...
+            (d3.laserRegion==['Right' region{reg}] & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response~=1)) );
+        
+        [~,pvals(subj)] = fishertest(X);
+        pChoice(subj,:) = X(1,:)./sum(X,1);
+    end
+    avg_pchoice = nanmean(pChoice,1);
+    chi_vals = -2.*log(pvals);
+    group_pval = 1 - chi2cdf(sum(chi_vals),2*length(pvals));
+    fprintf('Contraversive %s: %0.2f vs %0.2f  %0.10f\n',region{reg},avg_pchoice(1), avg_pchoice(2), group_pval);
+end
+
+
+
+%Test that inactivation significantly changes ipsiversive choices
+region = {'VIS','M2','M1'};
+for reg = 1:3
+    pvals = nan(max(D.subjectID),1);
+    pChoice = nan(max(D.subjectID),2);
+    for subj = 1:max(D.subjectID)
+        d3 = getrow(D,D.subjectID==subj);
+        X = nan(2,2);
+        
+        X(1,1) =  sum( (d3.laserType==0 & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response==1)) | ...
+            (d3.laserType==0 & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response==2)) );
+        
+        X(2,1) =  sum( (d3.laserType==0 & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response~=1)) | ...
+            (d3.laserType==0 & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response~=2)) );
+        
+        X(1,2) =  sum( (d3.laserRegion==['Left' region{reg}] & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response==1)) | ...
+            (d3.laserRegion==['Right' region{reg}] & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response==2)) );
+        
+        X(2,2) =  sum( (d3.laserRegion==['Left' region{reg}] & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response~=1)) | ...
+            (d3.laserRegion==['Right' region{reg}] & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response~=2)) );
+        
+        [~,pvals(subj)] = fishertest(X);
+        pChoice(subj,:) = X(1,:)./sum(X,1);
+    end
+    avg_pchoice = nanmean(pChoice,1);
+    chi_vals = -2.*log(pvals);
+    group_pval = 1 - chi2cdf(sum(chi_vals),2*length(pvals));
+    fprintf('Ipsiversive %s: %0.2f vs %0.2f  %0.10f\n',region{reg},avg_pchoice(1), avg_pchoice(2), group_pval);
+end
+
+
+
+
+
+
+%Test that the rate of ipsiversive choices for VIS vs M2 inactivation
+pvals = nan(max(D.subjectID),1);
+pChoice = nan(max(D.subjectID),2);
+for subj = 1:max(D.subjectID)
+    d3 = getrow(D,D.subjectID==subj);
+    X = nan(2,2);
+      
+    X(1,1) =  sum( (d3.laserRegion=='LeftVIS' & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response==1)) | ...
+                   (d3.laserRegion=='RightVIS' & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response==2)) );
+    
+    X(2,1) =  sum( (d3.laserRegion=='LeftVIS' & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response~=1)) | ...
+                   (d3.laserRegion=='RightVIS' & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response~=2)) );
+   
+    X(1,2) =  sum( (d3.laserRegion=='LeftM2' & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response==1)) | ...
+                   (d3.laserRegion=='RightM2' & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response==2)) );
+    
+    X(2,2) =  sum( (d3.laserRegion=='LeftM2' & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response~=1)) | ...
+                   (d3.laserRegion=='RightM2' & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response~=2)) );
+       
+    [~,pvals(subj)] = fishertest(X);
+    pChoice(subj,:) = X(1,:)./sum(X,1);
+end
+avg_pchoice = nanmean(pChoice,1);
+chi_vals = -2.*log(pvals);
+group_pval = 1 - chi2cdf(sum(chi_vals),2*length(pvals));
+fprintf('Ipsiversive VIS vs MOs: %0.2f vs %0.2f %0.10f\n',avg_pchoice(1), avg_pchoice(2), group_pval);
+%% Multi-power: fisher exact test: per subject + per power level
+ 
+%Test that inactivation significantly decreases contraversive choices
+region = {'VIS','M2','M1'};
+powers = [1.5 2.9 4.25];
+for reg = 1:3
+    for pow = 1:3
+        pvals = nan(max(D.subjectID),1);
+        pChoice = nan(max(D.subjectID),2);
+        for subj = 1:max(D.subjectID)
+            d3 = getrow(D,D.subjectID==subj & (D.laserPower==powers(pow) | D.laserType==0));
+            X = nan(2,2);
+            
+            X(1,1) =  sum( (d3.laserType==0 & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response==2)) | ...
+                (d3.laserType==0 & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response==1)) );
+            
+            X(2,1) =  sum( (d3.laserType==0 & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response~=2)) | ...
+                (d3.laserType==0 & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response~=1)) );
+            
+            X(1,2) =  sum( (d3.laserRegion==['Left' region{reg}] & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response==2)) | ...
+                (d3.laserRegion==['Right' region{reg}] & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response==1)) );
+            
+            X(2,2) =  sum( (d3.laserRegion==['Left' region{reg}] & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response~=2)) | ...
+                (d3.laserRegion==['Right' region{reg}] & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response~=1)) );
+            
+            [~,pvals(subj)] = fishertest(X);
+            pChoice(subj,:) = X(1,:)./sum(X,1);
+        end
+        avg_pchoice = nanmean(pChoice,1);
+        chi_vals = -2.*log(pvals);
+        group_pval = 1 - chi2cdf(sum(chi_vals),2*length(pvals));
+        fprintf('Contraversive %s (%0.2f): %0.2f vs %0.2f  %0.10f\n',region{reg},powers(pow),avg_pchoice(1), avg_pchoice(2), group_pval);
+    end
+end
+
+
+%Test that inactivation significantly changes ipsiversive choices
+region = {'VIS','M2','M1'};
+powers = [1.5 2.9 4.25];
+for reg = 1:3
+    for pow = 1:3
+        pvals = nan(max(D.subjectID),1);
+        pChoice = nan(max(D.subjectID),2);
+        for subj = 1:max(D.subjectID)
+            d3 = getrow(D,D.subjectID==subj & (D.laserPower==powers(pow) | D.laserType==0));
+            X = nan(2,2);
+            
+            X(1,1) =  sum( (d3.laserType==0 & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response==1)) | ...
+                (d3.laserType==0 & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response==2)) );
+            
+            X(2,1) =  sum( (d3.laserType==0 & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response~=1)) | ...
+                (d3.laserType==0 & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response~=2)) );
+            
+            X(1,2) =  sum( (d3.laserRegion==['Left' region{reg}] & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response==1)) | ...
+                (d3.laserRegion==['Right' region{reg}] & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response==2)) );
+            
+            X(2,2) =  sum( (d3.laserRegion==['Left' region{reg}] & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response~=1)) | ...
+                (d3.laserRegion==['Right' region{reg}] & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response~=2)) );
+            
+            [~,pvals(subj)] = fishertest(X);
+            pChoice(subj,:) = X(1,:)./sum(X,1);
+        end
+        avg_pchoice = nanmean(pChoice,1);
+        chi_vals = -2.*log(pvals);
+        group_pval = 1 - chi2cdf(sum(chi_vals),2*length(pvals));
+        fprintf('Ipsiversive %s (%0.2f): %0.2f vs %0.2f  %0.10f\n',region{reg},powers(pow),avg_pchoice(1), avg_pchoice(2), group_pval);
+    end
+end
+
+
+
+%Test that the rate of ipsiversive choices for VIS vs M2 inactivation
+powers = [1.5 2.9 4.25];
+for pow = 1:3
+    pvals = nan(max(D.subjectID),1);
+    pChoice = nan(max(D.subjectID),2);
+    for subj = 1:max(D.subjectID)
+        d3 = getrow(D,D.subjectID==subj & (D.laserPower==powers(pow) | D.laserType==0));
+
+        X = nan(2,2);
+        
+        X(1,1) =  sum( (d3.laserRegion=='LeftVIS' & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response==1)) | ...
+            (d3.laserRegion=='RightVIS' & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response==2)) );
+        
+        X(2,1) =  sum( (d3.laserRegion=='LeftVIS' & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response~=1)) | ...
+            (d3.laserRegion=='RightVIS' & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response~=2)) );
+        
+        X(1,2) =  sum( (d3.laserRegion=='LeftM2' & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response==1)) | ...
+            (d3.laserRegion=='RightM2' & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response==2)) );
+        
+        X(2,2) =  sum( (d3.laserRegion=='LeftM2' & (d3.stimulus(:,1)==0 & d3.stimulus(:,2)>0 & d3.response~=1)) | ...
+            (d3.laserRegion=='RightM2' & (d3.stimulus(:,1)>0 & d3.stimulus(:,2)==0 & d3.response~=2)) );
+        
+        [~,pvals(subj)] = fishertest(X);
+        pChoice(subj,:) = X(1,:)./sum(X,1);
+    end
+    avg_pchoice = nanmean(pChoice,1);
+    chi_vals = -2.*log(pvals);
+    group_pval = 1 - chi2cdf(sum(chi_vals),2*length(pvals));
+    fprintf('Ipsiversive VIS vs MOs (%0.2f): %0.2f vs %0.2f %0.10f\n',powers(pow),avg_pchoice(1), avg_pchoice(2), group_pval);
+end
+
+%% Multi-power: fit mechanistic model 
+
+%1) Load fit from widefield to get weight posterior, to use as prior for next
+%fit
+fit_mech = load("C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\tp2ade4d28_eb4c_4b67_9974_d8ab0391ee9c.mat");
+w_mu = mean( fit_mech.posterior.w, 1);
+w_S = cov( fit_mech.posterior.w);
+
+%2) Compute firing_rate values on no-laser trials
+perturbationRegion = {'LeftVIS','RightVIS','LeftM2','RightM2'};
+D1 = getrow(D, any(D.laserRegion == perturbationRegion,2) | D.laserType==0);
+D1.perturbation = zeros(size(D1.response));
+for p = 1:length(perturbationRegion)
+    D1.perturbation(D1.laserRegion == perturbationRegion{p}) = p;
+end
+NL_idx = D1.laserType==0;
+
+fr = load("C:\Users\Peter\Documents\MATLAB\inactPaper\widefield\mechanistic_fit\visMOs_allConds.mat");
+
+% VIS_window = [0.075 0.125];
+VIS_window = [0.065 0.115];
+MOS_window = [0.125 0.175];
+
+%get ephys data at critical timewindow
+vis = mean( mean( fr.vis(:,:,:,VIS_window(1) < fr.binsS & fr.binsS < VIS_window(2)), 4), 3);
+m2 = mean( mean( fr.mos(:,:,:,MOS_window(1) < fr.binsS & fr.binsS < MOS_window(2)), 4), 3);
+
+F=[];
+F(:,1) = interp2(fr.ucl, fr.ucr, vis, D1.stimulus(NL_idx,1) , D1.stimulus(NL_idx,2), 'linear' );
+F(:,2) = interp2(fr.ucl, fr.ucr, vis', D1.stimulus(NL_idx,1) , D1.stimulus(NL_idx,2), 'linear' );
+F(:,3) = interp2(fr.ucl, fr.ucr, m2, D1.stimulus(NL_idx,1) , D1.stimulus(NL_idx,2), 'linear' );
+F(:,4) = interp2(fr.ucl, fr.ucr, m2', D1.stimulus(NL_idx,1) , D1.stimulus(NL_idx,2), 'linear' );
+
+dat=struct;
+dat.choice = D1.response(NL_idx);
+dat.sessionID = D1.sessionID(NL_idx);
+dat.subjectID = D1.subjectID(NL_idx);
+dat.firing_rate = F;
+dat.PRIOR_MU = w_mu;
+dat.PRIOR_S = w_S;
+dat.PRIOR_S(1,1) = 1; %BROADEN PRIOR ON ALPHAS
+dat.PRIOR_S(2,2) = 1; %BROADEN PRIOR ON ALPHAS
+dat.PRIOR_S = dat.PRIOR_S + diag(diag(w_S)); %BROADEN PRIOR ON ALPHAS
+fit_inact = bfit.fitModel('Two-Level-Mechanistic-SYMMETRICAL-PRESETW',dat);
+
+%% Multi-power: plot mechanistic model (cross-prediction from widefield)
+%Old one based on later VIS window
+fit_inact = load('C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\tpad8496b2_6089_416e_941c_8dee1fb09ce0.mat');
+
+%Plot posterior of Weights, copying over symmetrical values
+WL = fit_inact.posterior.w(:,2+[1:4]);
+WR = fit_inact.posterior.w(:,2+[2 1 4 3]);
+areaCols = [ 109 183 229;
+                77 131 158;
+                160 206 87;
+             119 147 62]/255;
+         
+figure('color','w');
+axes; hold on;
+for region = 1:4 
+    mu = mean([WL(:,region), WR(:,region)]);
+    Sigma = cov([WL(:,region), WR(:,region)]);
+    x1 = (mu(1) - 100*max(diag(Sigma))):0.001:(mu(1) + 100*max(diag(Sigma)));
+    x2 = (mu(2) - 100*max(diag(Sigma))):0.001:(mu(2) + 100*max(diag(Sigma)));
+    [X1,X2] = meshgrid(x1,x2);
+    F = mvnpdf([X1(:) X2(:)],mu,Sigma);
+    F = reshape(F,length(x2),length(x1));
+    [c1,c2]=contour(x1,x2,F,8);
+    c2.LineColor = areaCols(region,:);
+    c2.LineWidth=1;
+end
+set(gca,'dataaspectratio',[1 1 1]);
+line([0 0],[-1 1]*0.5); line([-1 1]*0.5,[0 0]);
+hh=ezplot('y=x'); hh.LineStyle='--';
+set(gca,'xlim',[-1 1]*0.25,'ylim',[-1 1]*0.25);
+xlabel('W_L'); ylabel('W_R'); title('Posterior dist of weights');
+
+%Plot model on behavioural data on detection contrast stimuli
+D1.pedestal = min(D1.stimulus(:,1), D1.stimulus(:,2));
+D1.cDiff = D1.stimulus(:,2) - D1.stimulus(:,1);
+counts = crosstab(D1.pedestal,...
+                  D1.cDiff,...
+                  D1.response,...
+                  D1.sessionID,...
+                  D1.perturbation);
+prob = counts./sum(counts,3); 
+prob = nanmean(prob, 4); %avg over sessions
+prob = prob(1,:,:,:,:); %only care about zero pedestal
+prob = permute(prob,[2 3 5 1 4]); % cD x Resp x Perturb
+cdU = unique(D1.cDiff);
+
+
+CL = [linspace(1,0,500), zeros(1,500)];
+CR = [zeros(1,500), linspace(0,1,500)];
+F=[];
+F(1,:) = interp2(fr.ucl, fr.ucr, vis, CL , CR, 'linear' );
+F(2,:) = interp2(fr.ucl, fr.ucr, vis', CL , CR, 'linear' );
+F(3,:) = interp2(fr.ucl, fr.ucr, m2, CL , CR, 'linear' );
+F(4,:) = interp2(fr.ucl, fr.ucr, m2', CL , CR, 'linear' );
+
+NL_ph=bplot.MECH_SYMETRICAL(fit_inact.posterior.w, F);
+mean_ph = mean(NL_ph,1);
+q_ph = quantile(NL_ph,[0.025 0.975],1);
 
 figure('color','w');
-subplot(1,2,1); hold on; line([1 3],[1 1]*pContraNL);
-subplot(1,2,2); hold on; line([1 3],[1 1]*pIpsiNL);
-for region = 1:3
-	subplot(1,2,1); hold on;
-    h=plot( region + [-1 0 1]*0.2, pContraversive(region,:),'.-','markersize',20)
-    null = squeeze(dContraversive_null(region,:,:))';
-    pVal = min(mean(dContraversive(region,:) <= null,1), mean(dContraversive(region,:) >= null,1));
-    text(region + [-1 0 1]*0.2, pContraversive(region,:),arrayfun(@(n) num2str(n),pVal,'uni',0) );
+ha = tight_subplot(4,3,0.05,0.1,0.1);
+for f = 1:4
     
-    subplot(1,2,2); hold on;
-    plot( region + [-1 0 1]*0.2, pIpsiversive(region,:),'.-','markersize',20)
-    null = squeeze(dIpsiversive_null(region,:,:))';
-    pVal = min(mean(dIpsiversive(region,:) <= null,1), mean(dIpsiversive(region,:) >= null,1));
-    text(region + [-1 0 1]*0.2, pIpsiversive(region,:),arrayfun(@(n) num2str(n),pVal,'uni',0) );
-end
-set(get(gcf,'children'),'ylim',[0 1]);
-set(get(gcf,'children'),'xtick',1:3,'xticklabel',regionLabels);
-
-
-%%%%%%%%%% Compute empirical reaction times
-[G,resp,pert,sess,cl,cr] = findgroups(D2.response,...
-                                          D2.perturbation,...
-                                          D2.sessionID,...
-                                          D2.stimulus(:,1)>0,...
-                                          D2.stimulus(:,2)>0);
-rt = splitapply(@nanmedian,D2.RT,G); %Calculate median RT for each combination
-%reshape into useful array
-vars = {resp,pert,sess,cl,cr};
-[~,~,vid] = cellfun(@(v) unique(v), vars, 'uni', 0);
-dim = cellfun(@(v) length(unique(v)), vars);
-RT = nan(dim); RT( sub2ind(dim,vid{1},vid{2},vid{3},vid{4},vid{5}) ) = rt;
-% RT = RT(:,2:end,:,:,:) - RT(:,1,:,:,:);% convert to difference from nolaser condition
-RT = nanmedian(RT, 3);%average over sessions
-
-RTContra = nanmean([RT(1,2:2:end,:,2,1);... %change in Left choice RT on CL, when inactivating RIGHT hemisphere
-                    RT(2,1:2:end,:,1,2)],1); %change in Right choice RT on CR, when inactivating LEFT hemisphere
-RTIpsi = nanmean([RT(2,2:2:end,:,2,1);... %change in Right choice RT on CL, when inactivating RIGHT hemisphere
-                    RT(1,1:2:end,:,1,2)],1); %change in Left choice RT on CR, when inactivating LEFT hemisphere
-                
-figure('color','w');
-for region = 1:3
-    subplot(1,2,1); hold on;
-    plot(region, RTContra(region),'.-','markersize',20);
-%     null = squeeze(dContraversive_null(region,:,:))';
-%     pVal = min(mean(dContraversive(region,:) <= null,1), mean(dContraversive(region,:) >= null,1));
-%     text(region + [-1 0 1]*0.2, dContraversive(region,:),arrayfun(@(n) num2str(n),pVal,'uni',0) );
+    F_inact = F;
+    F_inact(f,:) = 0;
+    Lph=bplot.MECH_SYMETRICAL(fit_inact.posterior.w, F_inact);
+    mean_Lph = mean(Lph,1);
+    q_Lph = quantile(Lph,[0.025 0.975],1);
     
-    subplot(1,2,2); hold on;
-    plot(region, RTIpsi(region),'.-','markersize',20);
-%     null = squeeze(dIpsiversive_null(region,:,:))';
-%     pVal = min(mean(dIpsiversive(region,:) <= null,1), mean(dIpsiversive(region,:) >= null,1));
-%     text(region + [-1 0 1]*0.2, dIpsiversive(region,:),arrayfun(@(n) num2str(n),pVal,'uni',0) );
+    for r = 1:3
+        hold( ha( 3*(f-1) + r ), 'on');
+        plot(ha( 3*(f-1) + r ), CR-CL, mean_ph(1,:,r) , 'k-');
+        fx=fill( ha( 3*(f-1) + r ), [CR-CL fliplr(CR-CL)],[q_ph(1,:,r) fliplr(q_ph(2,:,r))],'k'); fx.FaceAlpha=0.2; fx.EdgeAlpha=0;
+
+        plot( ha( 3*(f-1) + r ), cdU, prob(:,r,1), 'k.', 'markersize',15);
+        
+        plot( ha( 3*(f-1) + r ), CR-CL, mean_Lph(1,:,r), '-', 'color', areaCols(f,:));
+        fx=fill( ha( 3*(f-1) + r ), [CR-CL fliplr(CR-CL)],[q_Lph(1,:,r) fliplr(q_Lph(2,:,r))],'r'); fx.FaceAlpha=0.2; fx.EdgeAlpha=0;
+        fx.FaceColor = areaCols(f,:);
+        plot( ha( 3*(f-1) + r ), cdU, prob(:,r,1+f), '.','color',areaCols(f,:), 'markersize',15);
+
+    end
+
 end
-set(get(gcf,'children'),'xtick',1:3,'xticklabel',regionLabels);
+set(ha,'ylim',[0 1],'dataaspectratio',[1 1 1]);
+
+% Plot change to contraversive and ipsiversive on trials with stimuli on
+% the contralateral side only
+% Since model is symmetrical i can just look at one side: high CL only,
+% inactivating RIGHT hemisphere and looking at changes in Left and Right
+% choics
+CL = unique(D1.stimulus(:,1)); CL(1) = [];
+CR = zeros(size(CL));
+proportionLeftContrast = tabulate(D1.stimulus(D1.stimulus(:,2)==0,1));
+proportionLeftContrast = proportionLeftContrast(:,2)'; proportionLeftContrast(1)=[];
+proportionLeftContrast = proportionLeftContrast/sum(proportionLeftContrast);
+
+F=[];
+F(1,:) = interp2(fr.ucl, fr.ucr, vis, CL , CR, 'linear' );
+F(2,:) = interp2(fr.ucl, fr.ucr, vis', CL , CR, 'linear' );
+F(3,:) = interp2(fr.ucl, fr.ucr, m2, CL , CR, 'linear' );
+F(4,:) = interp2(fr.ucl, fr.ucr, m2', CL , CR, 'linear' );
+
+NL_ph=bplot.MECH_SYMETRICAL(fit_inact.posterior.w, F);
+mean_ph = mean(NL_ph,1);
+pContraNL = sum( mean_ph(:,:,1).*proportionLeftContrast );
+pIpsiNL = sum( mean_ph(:,:,2).*proportionLeftContrast );
+
+%Now look at proportion of contra and ipsi when simulating inactivation of
+%right hemisphere
+
+%R VIS:
+F_inact=F;
+F_inact(2,:)=0;
+ph=bplot.MECH_SYMETRICAL(fit_inact.posterior.w, F_inact);
+mean_ph = mean(ph,1);
+pContraVIS = sum( mean_ph(:,:,1).*proportionLeftContrast );
+pIpsiVIS = sum( mean_ph(:,:,2).*proportionLeftContrast );
+
+%R MOs:
+F_inact=F;
+F_inact(4,:)=0;
+ph=bplot.MECH_SYMETRICAL(fit_inact.posterior.w, F_inact);
+mean_ph = mean(ph,1);
+pContraM2 = sum( mean_ph(:,:,1).*proportionLeftContrast );
+pIpsiM2 = sum( mean_ph(:,:,2).*proportionLeftContrast );
+
+figure;
+subplot(1,2,1);
+hx=bar([pContraVIS pContraM2],'BaseValue',pContraNL); 
+subplot(1,2,2);
+hx=bar([pIpsiVIS pIpsiM2],'BaseValue',pIpsiNL); 
 
 
+% 
+% %%%TODO: UPDATE THIS CODE
+% %Create a contraversive and ipsiversive plot for stimuli present only on
+% %the contralateral side
+% %Since model is symmetrical i can just look at one side: high CL only
+% % CL = unique(fit_mech.data.contrastLeft); CL(1) = [];
+% CL = 1;
+% CR = zeros(size(CL));
+% 
+% F=[];
+% F(1,:) = interp2(fr.ucl, fr.ucr, vis, CL , CR, 'linear' );
+% F(2,:) = interp2(fr.ucl, fr.ucr, vis', CL , CR, 'linear' );
+% F(3,:) = interp2(fr.ucl, fr.ucr, m2, CL , CR, 'linear' );
+% F(4,:) = interp2(fr.ucl, fr.ucr, m2', CL , CR, 'linear' );
+% NL_ph=bplot.MECH_SYMETRICAL(fit_inact.posterior.w, F);
+% mean_ph = mean(NL_ph,1);
+% pContraNL = mean_ph(:,:,1);
+% pIpsiNL = mean_ph(:,:,2);
+% 
+% %Inactivate right hemisphere VIS
+% F_inact = F;
+% F_inact(2,:) = 0;
+% ph=bplot.MECH_SYMETRICAL(fit_inact.posterior.w, F_inact);
+% mean_ph_v = mean(ph,1);
+% q_ph_v = quantile(ph,[0.025 0.975],1);
+% 
+% %inactivate right hemisphere MOs
+% F_inact = F;
+% F_inact(4,:) = 0;
+% ph=bplot.MECH_SYMETRICAL(fit_inact.posterior.w, F_inact);
+% mean_ph_m = mean(ph,1);
+% q_ph_m = quantile(ph,[0.025 0.975],1);
+% 
+% %Plot:
+% figure('color','w');
+% subplot(1,2,1); hold on;
+% bar([mean_ph_v(:,:,1) mean_ph_m(:,:,1)],'BaseValue',pContraNL,'EdgeAlpha',0); 
+% line([1 1],q_ph_v(:,:,1),'color',[1 1 1]*0.5,'linewidth',8);
+% line([2 2],q_ph_m(:,:,1),'color',[1 1 1]*0.5,'linewidth',8);
+% ylabel('pContraversive'); ylim([0 1]); xlim([0.5 2.5]);
+% 
+% subplot(1,2,2); hold on;
+% bar([mean_ph_v(:,:,2) mean_ph_m(:,:,2)],'BaseValue',pIpsiNL,'EdgeAlpha',0); 
+% line([1 1],q_ph_v(:,:,2),'color',[1 1 1]*0.5,'linewidth',8);
+% line([2 2],q_ph_m(:,:,2),'color',[1 1 1]*0.5,'linewidth',8);
+% ylabel('pIpsiversive');  ylim([0 0.5]); xlim([0.5 2.5]);
+% 
+% regionLabels = {'VIS','MOs'};
+% set(get(gcf,'children'),'xtick',1:2,'xticklabel',regionLabels);
 
-
-%% Fit multi-level model, or load previous fit already
+%% Multi-power: Fit phenomenological model
 perturbationRegion = {'LeftVIS','RightVIS','LeftM2','RightM2'};
 D1 = getrow(D, any(D.laserRegion == perturbationRegion,2) | D.laserType==0);
 
@@ -746,12 +1542,9 @@ for p = 1:length(perturbationRegion)
     dat.perturbation(D1.laserRegion == perturbationRegion{p}) = p;
 end
 
-% fit = bfit.fitModel('Two-Level-Perturbation',dat);
-fit_mech = bfit.fitModel('Two-Level-Mechanistic',dat);
-
-% fit=load("C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\2018-06-21_1703_Two-Level-Perturbation.mat");
+fit = bfit.fitModel('Two-Level-Perturbation',dat);
 fit=load("C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\Two-level_removed_pre_stim_movement_trials.mat");
-%% Plot multi-level model fits
+%% Multi-power: Plot phenomenological model
 % areaCols = [ 0 0 1;
 %              0 0 0.5;
 %              0 1 0;
@@ -880,6 +1673,12 @@ title(ha(2),'pNoGo');
 title(ha(3),'pRight');
 set(ha,'dataaspectratio',[1 1 1]);
 
+%% Multi-power: Calculate %correct on high contrsat conditions, averaged across sessions
+pCorr = nan(max(D.sessionID),1);
+for sess = 1:max(D.sessionID)
+    idx = D.sessionID==sess & ((D.stimulus(:,1)==0.54 & D.stimulus(:,2)==0) | (D.stimulus(:,1)==0 & D.stimulus(:,2)==0.54));
+    pCorr(sess) = mean(D.feedbackType(idx));
+end
 %% IIA plot?
 %Get prob of choice for all possible conditions
 [counts,~,~,labels] = crosstab(D.stimulus(:,1),...
@@ -909,7 +1708,7 @@ plot(stim, zr, 'o-');xlabel('CL'); ylabel('Log pR/pNG');
 hold on; plot(stim, mean(zr',1), 'ko--');
 
 
-%% Plot mechanistic model fit
+%% Plot old mechanistic model fit
 % fit_mech = load("C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\mech_inactivation.mat");
 fit_mech = load("C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\tpe9664113_3681_4f17_9c23_d4da9f50fabe.mat"); %Original mechanistic model fit
 fit_mech = load("C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\tp054a2072_da39_432a_8c1b_8480a5f745a9.mat"); %Mechanistic model fit with different baselines for VIS and MOs
@@ -1238,7 +2037,6 @@ cmap = [ones(100,1) linspace(0,1,100)' linspace(0,1,100)';
     linspace(1,0,100)' linspace(1,0,100)' ones(100,1)];
     colormap(flipud(cmap));
 end
-
 
 %% IIA PLot
 
