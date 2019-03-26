@@ -874,6 +874,10 @@ areaCols = [      0    0.4470    0.7410; %blue
     0.8500    0.3250    0.0980; %orange
     0.4940    0.1840    0.5560; %purple
     0.8 0.8 0.8]; %grey
+
+figure;
+ha = tight_subplot(4,10,0.01,0,0);
+
 figure(101);
 onsetTime = nan(height(sessionList),5,2);
 rt_vals = cell(height(sessionList),1);
@@ -906,6 +910,8 @@ for sess = 1:height(sessionList)
  
     [~,onsetIdx]=max( mean(ROIstim_norm(contraIdx,:,:),1) >=0.25,[],3);
     onsetTime(sess,:,1) = ROIstimT(onsetIdx);
+    
+    plot(ha(sess), ROIstimT,squeeze(mean(ROIstim_norm(contraIdx,:,:),1)) )
     
     [~,onsetIdx]=max( mean(ROIstim_norm(ipsiIdx,:,:),1) >=0.25,[],3);
     onsetTime(sess,:,2) = ROIstimT(onsetIdx);
@@ -1007,6 +1013,143 @@ for region = 1:5
         plot( avg_mouse, m, '.', 'markersize',20,'color',areaCols(region,:));
         line( avg_mouse + [-1 1]*err_mouse, [1 1]*m, 'Color',areaCols(region,:) )
     end
+end
+
+%% 4) New latency plot: pool sessions for each mouse
+areaCols = [      0    0.4470    0.7410; %blue
+    0.3010    0.7450    0.9330; %lightblue
+    0.4660    0.6740    0.1880; %green
+    0.8500    0.3250    0.0980; %orange
+    0.4940    0.1840    0.5560; %purple
+    0.8 0.8 0.8]; %grey
+
+mice={'Hench','Reichstein','Cori','Chain','Radnitz','Moniz'};
+figure; ha1 = tight_subplot(2, length(mice), 0.01, 0.1, 0.1);
+figure; ha = tight_subplot(2,1,0.1,0.1,0.1);
+hold(ha(1),'on');
+pooled_rt = [];
+onsetTime = [];
+thres = 0.3;
+for m = 1:length(mice)
+    %Get all sessions from this mouse
+    sessIDs = find(contains(sessionList.mouseName,mice{m}));
+    
+    
+    ROIstimStack = cell(length(sessIDs),1);
+    allBehav = struct;
+    for sess = 1:length(sessIDs)
+        eRef = sessionList.expRef{sessIDs(sess)};
+        fprintf('Session %d %s\n',sessIDs(sess),eRef);
+        
+        %Load ROI locations
+        roiFile = [ './preproc/WF_ROI/' mice{m} '.mat'];
+        roi = load(roiFile);
+        bregma=roi.px(1);roi.px(1)=[];
+        
+        %Load epoch-aligned data
+        wfAlignedFile = [ './preproc/WF_aligned/' eRef '.h5'];
+        ROIstim = h5read(wfAlignedFile,'/ROIstim');
+        ROIstimT = h5read(wfAlignedFile,'/ROIstimT');
+        
+        %Get inclTrials for ROI traces
+        %Load behavioural data
+        behavFile = [ './preproc/BEHAV_RT_Corrected/' eRef '.mat'];
+        b = load(behavFile);
+        allBehav = addstruct(allBehav, b);
+        
+        ROIstimStack{sess} = ROIstim(:,1:5,:); %Right ROI
+    end
+    
+    %Stack ROIs
+    ROIstimStack = cat(1,ROIstimStack{:});
+    
+    %Get inclTrials for ROI traces
+    contraIdx = allBehav.contrastLeft>0 & allBehav.contrastRight==0 & allBehav.choice==1;
+    ipsiIdx = allBehav.contrastLeft==0 & allBehav.contrastRight>0 & allBehav.choice==2;
+    ROIstim_norm = ROIstimStack ./ max( mean(ROIstimStack(contraIdx,:,:),1) ,[], 3 );
+    ROIstim_norm(:,:,ROIstimT<=0.04) = 0;
+    
+    %avg over trials
+    mean_norm_contra = mean(ROIstim_norm(contraIdx,:,:),1);
+    mean_norm_ipsi = mean(ROIstim_norm(ipsiIdx,:,:),1);
+
+    %Get onset time for contra stimuli
+    [~,onsetIdx]=max( mean_norm_contra >= thres,[],3);
+    onsetTime(m,:,1) = ROIstimT(onsetIdx);
+    
+    %Plot
+    hold(ha1(m),'on');
+    hold(ha1(length(mice)+m),'on');
+    for region = 1:5
+        plot(ha1(m),ROIstimT,squeeze(mean_norm_contra(1,region,:)), 'color', areaCols(region,:));
+        plot(ha1(length(mice)+m),ROIstimT,squeeze(mean_norm_ipsi(1,region,:)), 'color', areaCols(region,:));
+    
+        plot(ha(1), onsetTime(m,region,1), m, 'ko', 'MarkerFaceColor',areaCols(region,:));
+        plot(ha1(m), onsetTime(m,region,1), thres, 'ko', 'MarkerFaceColor',areaCols(region,:));
+        
+        [~,peakTimes]=findpeaks(squeeze(mean_norm_contra(1,region,:)), ROIstimT,'NPeaks',2,'MinPeakWidth',20/1000);
+        plot(ha1(m), peakTimes(1), 1, 'kd', 'MarkerFaceColor',areaCols(region,:));
+        
+        [~,peakTimes]=findpeaks(squeeze(mean_norm_ipsi(1,region,:)), ROIstimT,'NPeaks',2,'MinPeakWidth',20/1000);
+        plot(ha1(m+length(mice)), peakTimes(1), 1, 'kd', 'MarkerFaceColor',areaCols(region,:));
+    end
+    title(ha1(m), mice{m});
+    
+    %plot RT
+    rt = allBehav.RT(contraIdx); rt(isnan(rt))=[];
+    pooled_rt = [pooled_rt; rt];
+    avg = median( rt );
+    err = mad(rt,1);
+    plot(ha(1), avg, m, 'ko');
+    line(ha(1), [avg-err avg+err],[1 1]*m,'color','k')
+    
+    %Get onset time for ipsi stimuli
+    [~,onsetIdx]=max( mean_norm_ipsi >=thres,[],3);
+    onsetTime(m,:,2) = ROIstimT(onsetIdx);
+    
+    %Plot as dots
+    for region = 1:5
+        plot(ha1(length(mice)+m), onsetTime(m,region,2), thres, 'ko', 'MarkerFaceColor',areaCols(region,:));
+    end
+    
+%     set(ha(m),'colororder', areaCols);
+%     plot(ha(m), ROIstimT,squeeze(mean(ROIstim_norm(contraIdx,:,:),1)) )
+%     title(ha(m), mice{m});
+end
+set(ha(1),'ydir','reverse','yticklabel',mice, 'ytick', 1:length(mice)); 
+set(ha,'xticklabelmode','auto');
+linkaxes(ha1,'xy');
+set(ha1,'yticklabelmode','auto');
+
+%Plot median and MAD for contra
+avgC = median(onsetTime(:,:,1),1);
+errC = mad(onsetTime(:,:,1),1);
+avgI = median(onsetTime(:,:,2),1);
+errI = mad(onsetTime(:,:,2),1);
+hold(ha(2),'on');
+for region = 1:5
+    plot(ha(2), avgC(region), region/5, 'ko', 'MarkerFaceColor',areaCols(region,:));
+    line(ha(2), [avgC(region)-errC(region) avgC(region)+errC(region)],[1 1]*region/5,'color',areaCols(region,:))
+    
+    plot(ha(2), avgI(region), -region/5, 'ko', 'color',areaCols(region,:));
+    line(ha(2), [avgI(region)-errI(region) avgI(region)+errI(region)],-1*[1 1]*region/5,'color',areaCols(region,:))
+end
+avg = median( pooled_rt );
+err = mad(pooled_rt,1);
+plot(ha(2), avg, 0, 'ko');
+line(ha(2), [avg-err avg+err],[0 0],'color','k')
+linkaxes(ha,'x');
+
+set(ha(1),'xlim',[0.03 0.35],'ylim',[0 length(mice)+1]);
+set(ha(2),'ylim',[-1.5 1.5]);
+
+%Plot statistical test
+for region = 1:5
+    %Paired ttest between CONTRA and IPSI latencies measured for each mouse
+    [h,pval,ci,stats] = ttest( onsetTime(:,region,1), onsetTime(:,region,2) );
+%         pval = signrank( onsetTime(:,region,1), onsetTime(:,region,2) );
+    txt = sprintf('t(%0.0f)=%0.2f',stats.df,stats.tstat);
+    text(ha(2),avgC(region) + 0.01, region/5, txt);
 end
 
 
@@ -1195,13 +1338,6 @@ wf_window_delay = 0.03;
 vis = mean( mean( fr.vis(:,:,:,VIS_window(1) < fr.binsS & fr.binsS < VIS_window(2)), 4), 3);
 m2 = mean( mean( fr.mos(:,:,:,MOS_window(1) < fr.binsS & fr.binsS < MOS_window(2)), 4), 3);
 
-figure('color','w');
-ha = tight_subplot(1,2,0.1,0.1,0.1);
-imagesc(ha(1), vis); 
-imagesc(ha(2), m2);title(ha(2),'LM2 ephys');
-set(ha,'dataaspectratio',[1 1 1]);
-xlabel(ha(1),'CL'); ylabel(ha(1),'CR'); title(ha(1),'LVIS ephys');
-set(ha,'xtick', 1:4, 'ytick', 1:4, 'xticklabel', fr.ucl, 'yticklabel', fr.ucl, 'ydir','normal');
 
 %get widefield data at critical timewindow
 dat = struct;
@@ -1234,7 +1370,8 @@ for sess = 1:height(sessionList)
     
     ROIstim(ROIstim<0) = 0; %Rectify
     
-    %Get ROI only at L and R VIS and MOs at the times relevant
+    %Get ROI only at L and R VIS and MOs, averaging over the specified
+    %timewindow
     avgF = [];
     avgF(:,1:2) = mean( ROIstim(:, areaIdx(1:2), (VIS_window(1)+wf_window_delay) <= ROIstimT & ROIstimT <= (VIS_window(2)+wf_window_delay)), 3);
     avgF(:,3:4) = mean( ROIstim(:, areaIdx(3:4), (MOS_window(1)+wf_window_delay) <= ROIstimT & ROIstimT <= (MOS_window(2)+wf_window_delay)), 3);
@@ -1261,6 +1398,22 @@ for cl = 1:length(fr.ucl)
         m2_wf(cr,cl) = mean( dat.firing_rate( dat.contrastLeft==fr.ucl(cl) & dat.contrastRight==fr.ucr(cr) ,3) ,1);%Left MOS
     end
 end
+
+%Plot ephys and widefield across the contrast conditions
+figure('color','w');
+ha = tight_subplot(2,2,0.1,0.1,0.1);
+imagesc(ha(1), vis); 
+imagesc(ha(2), m2);title(ha(2),'LM2 ephys');
+imagesc(ha(3), vis_wf);title(ha(3),'LVIS widefield'); 
+imagesc(ha(4), m2_wf);title(ha(4),'LM2 widefield'); 
+set(ha,'dataaspectratio',[1 1 1]);
+xlabel(ha(1),'CL'); ylabel(ha(1),'CR'); 
+title(ha(1),sprintf('ephys LVIS %0.2d-%0.2dms',1000*VIS_window(1),1000*VIS_window(2)));
+title(ha(2),sprintf('ephys LM2 %0.2d-%0.2dms',1000*MOS_window(1),1000*MOS_window(2)));
+title(ha(3),sprintf('widefield LVIS %0.2d-%0.2dms',1000*VIS_window(1) + 1000*wf_window_delay,1000*VIS_window(2) + 1000*wf_window_delay));
+title(ha(4),sprintf('widefield LM2 %0.2d-%0.2dms',1000*MOS_window(1)+ 1000*wf_window_delay,1000*MOS_window(2)+ 1000*wf_window_delay));
+set(ha,'xtick', 1:4, 'ytick', 1:4, 'xticklabel', fr.ucl, 'yticklabel', fr.ucl, 'ydir','normal');
+
 figure('color','w');
 subplot(1,2,1); plot(vis_wf(:),vis(:),'ko'); xlabel('VIS widefield (dF/F)'); ylabel('VIS ephys (sp/sec)'); lsline; axis square;
 subplot(1,2,2); plot(m2_wf(:),m2(:),'ko'); xlabel('M2 widefield (dF/F)'); ylabel('M2 ephys (sp/sec)');lsline; axis square;
@@ -1277,11 +1430,78 @@ dat.firing_rate(:,3:4) = m2_fit(2) + m2_fit(1)*dat.firing_rate(:,3:4);
 % %rectify
 dat.firing_rate(dat.firing_rate<0) = 0;
 
+% plot by contrast for each trial
+figure('color','w');
+ha = tight_subplot(2,4,0.03,0.01,0.01);
+uCL = [0 0.5 1];
+uCR = [0 0.5 1];
+hold(ha(4),'on'); hold(ha(8),'on');
+for r = 1:3
+    %VIS
+    hold(ha(r),'on');
+    m = nan( length(uCL), length(uCR), 2);
+    for cl = 1:length(uCL)
+        for cr = 1:length(uCR)
+            idx = dat.choice == r & dat.contrastLeft == uCL(cl) & dat.contrastRight == uCR(cr);
+            
+            hx1 = scatter(ha(r), dat.firing_rate(idx,1), dat.firing_rate(idx,2),10,'filled' );
+            hx1.MarkerFaceColor = 1*[uCR(cr) 0 uCL(cl)];
+            
+            hx2 = scatter(ha(r), mean(dat.firing_rate(idx,1)), mean(dat.firing_rate(idx,2)),100, 'filled' );
+            hx2.MarkerFaceColor = [uCR(cr) 0 uCL(cl)];
+            hx2.MarkerEdgeColor='w'; hx2.LineWidth = 2;
+            uistack(hx1,'bottom');
+            m(cl,cr,:) = mean(dat.firing_rate(idx,1:2)); 
+        end
+    end
+    plot(ha(r),m(:,:,1),m(:,:,2),'k-');
+    plot(ha(r),m(:,:,1)',m(:,:,2)','k-');
+    xlabel(ha(r),'VIS_L'); ylabel(ha(r),'VIS_R');
+    
+    cols = {'b','r','k'};
+    hxx = plot(ha(4),m(:,:,1),m(:,:,2),'-');
+    set(hxx,'color',cols{r});
+    hxx = plot(ha(4),m(:,:,1)',m(:,:,2)','-');
+    set(hxx,'color',cols{r});
+
+    
+    %MOs
+    hold(ha(r+4),'on');
+    m = nan( length(uCL), length(uCR), 2);
+    for cl = 1:length(uCL)
+        for cr = 1:length(uCR)
+            idx = dat.choice == r & dat.contrastLeft == uCL(cl) & dat.contrastRight == uCR(cr);
+            
+            hx1 = scatter(ha(r+4), dat.firing_rate(idx,3), dat.firing_rate(idx,4),10,'filled' );
+            hx1.MarkerFaceColor = 1*[uCR(cr) 0 uCL(cl)];
+            
+            hx2 = scatter(ha(r+4), mean(dat.firing_rate(idx,3)), mean(dat.firing_rate(idx,4)),100, 'filled' );
+            hx2.MarkerFaceColor = [uCR(cr) 0 uCL(cl)];
+            hx2.MarkerEdgeColor='w'; hx2.LineWidth = 2;
+            uistack(hx1,'bottom');
+            m(cl,cr,:) = mean(dat.firing_rate(idx,3:4)); 
+        end
+    end
+    plot(ha(r+4),m(:,:,1),m(:,:,2),'k-');
+    plot(ha(r+4),m(:,:,1)',m(:,:,2)','k-');
+    xlabel(ha(r+4),'MOS_L'); ylabel(ha(r+4),'MOS_R');
+    
+    hxx = plot(ha(8),m(:,:,1),m(:,:,2),'-');
+    set(hxx,'color',cols{r});
+    hxx = plot(ha(8),m(:,:,1)',m(:,:,2)','-');
+    set(hxx,'color',cols{r});
+end
+linkaxes(ha,'xy');
+title(ha(1),'Left choice');
+title(ha(2),'Right choice');
+title(ha(3),'NoGo');
+set(ha,'dataaspectratio',[1 1 1]);
+
 %2) Fit mechanistic model
-fit_mech = bfit.fitModel('Two-Level-Mechanistic',dat);
+fit_mech = bfit.fitModel('Two-Level-Mechanistic-SYMMETRICAL',dat);
 
 % Fit original phenomenological model:
-fit_phen = bfit.fitModel('Two-Level',dat);
+% fit_phen = bfit.fitModel('Two-Level',dat);
 %need to fix model code...
 
 %% Plot model log2 likelihood for each contrast condition
@@ -1339,11 +1559,19 @@ set(gca,'ydir','normal','xtick',1:4,'xticklabel',CL,'ytick',1:4,'yticklabel',CR)
 caxis([-1 1]*0.3)
 
 %% Plot cross-prediction model on widefield data
-% Model with old timings
 fit_mech = load("C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\tp03f24ce4_5470_4181_b95f_cfaf8abe5b33.mat");
 
-%Model with earlier VIS time window
-% fit_mech = load("C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\tp711b3be9_2238_439a_8bf5_1e3a1ce710fa.mat");
+%load dual dataset
+fr = load("C:\Users\Peter\Documents\MATLAB\inactPaper\widefield\mechanistic_fit\visMOs_allConds.mat");
+
+VIS_window = [0.075 0.125];
+MOS_window = [0.125 0.175];
+wf_window_delay = 0.03;
+
+%get ephys data at critical timewindow
+vis = mean( mean( fr.vis(:,:,:,VIS_window(1) < fr.binsS & fr.binsS < VIS_window(2)), 4), 3);
+m2 = mean( mean( fr.mos(:,:,:,MOS_window(1) < fr.binsS & fr.binsS < MOS_window(2)), 4), 3);
+
 
 fit_mech.data.pedestal = min(fit_mech.data.contrastLeft, fit_mech.data.contrastRight);
 fit_mech.data.cDiff = fit_mech.data.contrastRight - fit_mech.data.contrastLeft;
@@ -1416,8 +1644,132 @@ end
 set(gca,'dataaspectratio',[1 1 1]);
 line([0 0],[-1 1]*0.5); line([-1 1]*0.5,[0 0]);
 hh=ezplot('y=x'); hh.LineStyle='--';
-set(gca,'xlim',[-1 1]*0.25,'ylim',[-1 1]*0.25);
+set(gca,'xlim',[-1 1]*0.35,'ylim',[-1 1]*0.35);
 xlabel('W_L'); ylabel('W_R'); title('Posterior dist of weights');
+
+%% Plot cross-prediction model 3D curves only on 4 most common contrast conditions
+
+idx = any(fit_mech.data.contrastLeft == [0 0.25 0.5 1], 2) & any(fit_mech.data.contrastRight == [0 0.25 0.5 1], 2);
+
+c2 = crosstab(fit_mech.data.contrastLeft(idx),...
+    fit_mech.data.contrastRight(idx),...
+    fit_mech.data.choice(idx),...
+    fit_mech.data.sessionID(idx));
+prob = c2./sum(c2,3);%Convert to probability over choices
+prob_ave = nanmean(prob,4); %average over sessions
+
+CLs = unique(fit_mech.data.contrastLeft(idx));
+CRs = unique(fit_mech.data.contrastRight(idx));
+
+openDotSize = 9;
+
+colours = [ 0    0.4470    0.7410;
+    0.8500    0.3250    0.0980;
+    0.4940    0.1840    0.5560];
+
+f = figure('color','w');
+ha = tight_subplot(1,3,0.1,0.1,0.1);
+for i = 1:3; hold(ha(i),'on'); end;
+
+j = 1;
+for r = [1 3 2]
+    CLGrid = repmat(CLs,1,length(CRs));
+    CRGrid = repmat(CRs,1,length(CLs))';
+    PGrid = prob_ave(:,:,r);
+    
+    plot3(ha(j),CLGrid, CRGrid, PGrid, 'k--', 'color', colours(r,:));
+    plot3(ha(j),CLGrid', CRGrid', PGrid', 'k--', 'color', colours(r,:));
+    xlabel(ha(j),'CL'); ylabel(ha(j),'CR'); grid(ha(j),'on');
+    
+    %Marker based on whether choice is correct
+    if r == 1
+        plot3(ha(j), CLGrid(CLGrid>CRGrid), CRGrid(CLGrid>CRGrid), PGrid(CLGrid(:)>CRGrid(:)), 'ko' ,'markersize', openDotSize,'MarkerFaceColor', [0 0 0] );
+        plot3(ha(j), CLGrid(CRGrid>CLGrid), CRGrid(CRGrid>CLGrid), PGrid(CRGrid(:)>CLGrid(:)), 'ko' ,'markersize', openDotSize,'MarkerFaceColor', [1 1 1] );
+        plot3(ha(j), CLGrid(CLGrid==CRGrid & CLGrid>0), CRGrid(CLGrid==CRGrid & CLGrid>0), PGrid(CLGrid(:)==CRGrid(:) & CLGrid(:)>0), 'ko' ,'markersize', openDotSize,'MarkerFaceColor', [1 1 1]*0.5 );
+        plot3(ha(j), CLGrid(CLGrid==0 & CRGrid==0), CRGrid(CLGrid==0 & CRGrid==0), PGrid(CLGrid(:)==0 & CRGrid(:)==0), 'ko' ,'markersize', openDotSize,'MarkerFaceColor', [1 1 1] );
+
+    elseif r == 2
+        plot3(ha(j), CLGrid(CLGrid<CRGrid), CRGrid(CLGrid<CRGrid), PGrid(CLGrid(:)<CRGrid(:)),  'ko' ,'markersize', openDotSize,'MarkerFaceColor', [0 0 0] );
+        plot3(ha(j), CLGrid(CRGrid<CLGrid), CRGrid(CRGrid<CLGrid), PGrid(CRGrid(:)<CLGrid(:)), 'ko' ,'markersize', openDotSize,'MarkerFaceColor', [1 1 1] );
+        plot3(ha(j), CLGrid(CLGrid==CRGrid & CLGrid>0), CRGrid(CLGrid==CRGrid & CLGrid>0), PGrid(CLGrid(:)==CRGrid(:) & CRGrid(:)>0), 'ko' ,'markersize', openDotSize,'MarkerFaceColor', [1 1 1]*0.5 );
+        plot3(ha(j), CLGrid(CLGrid==0 & CRGrid==0), CRGrid(CLGrid==0 & CRGrid==0), PGrid(CLGrid(:)==0 & CRGrid(:)==0), 'ko' ,'markersize', openDotSize,'MarkerFaceColor', [1 1 1] );
+
+    elseif r == 3
+        plot3(ha(j), CLGrid(CLGrid==0 & CRGrid==0), CRGrid(CLGrid==0 & CRGrid==0), PGrid(CLGrid(:)==0 & CRGrid(:)==0), 'ko' ,'markersize', openDotSize,'MarkerFaceColor', [0 0 0] );
+        plot3(ha(j), CLGrid(CLGrid>0 | CRGrid>0), CRGrid(CLGrid>0 | CRGrid>0), PGrid(CRGrid(:)>0 | CLGrid(:)>0), 'ko' ,'markersize', openDotSize,'MarkerFaceColor', [1 1 1] );
+    end
+
+    j = j +1;
+end
+
+for cl = 1:length(CLs)
+    CL = ones(1,100)*CLs(cl);
+    CR = linspace(0,1,100);
+    
+    F=[];
+    F(1,:) = interp2(fr.ucl, fr.ucr, vis, CL , CR, 'linear' );
+    F(2,:) = interp2(fr.ucl, fr.ucr, vis', CL , CR, 'linear' );
+    F(3,:) = interp2(fr.ucl, fr.ucr, m2, CL , CR, 'linear' );
+    F(4,:) = interp2(fr.ucl, fr.ucr, m2', CL , CR, 'linear' );
+    ph=bplot.MECH_SYMETRICAL(fit_mech.posterior.w, F);
+    ph = permute( mean(ph,1), [2 3 1] );
+    j = 1;
+    for r = [1 3 2]
+        plot3(ha(j),CL,CR, ph(:,r), '-', 'color', colours(r,:));
+        j = j +1;
+    end
+end
+
+
+for cr = 1:length(CRs)
+    CR = ones(1,100)*CRs(cr);
+    CL = linspace(0,1,100);
+    F=[];
+    F(1,:) = interp2(fr.ucl, fr.ucr, vis, CL , CR, 'linear' );
+    F(2,:) = interp2(fr.ucl, fr.ucr, vis', CL , CR, 'linear' );
+    F(3,:) = interp2(fr.ucl, fr.ucr, m2, CL , CR, 'linear' );
+    F(4,:) = interp2(fr.ucl, fr.ucr, m2', CL , CR, 'linear' );
+    ph=bplot.MECH_SYMETRICAL(fit_mech.posterior.w, F);
+    ph = permute( mean(ph,1), [2 3 1] );
+    j = 1;
+    for r = [1 3 2]
+        plot3(ha(j),CL,CR, ph(:,r), '-', 'color', colours(r,:));
+        j = j +1;
+    end
+end
+set(ha, 'xticklabelmode','auto',...
+        'xtick', CLs,...
+        'yticklabelmode','auto',...
+        'ytick', CRs,...
+        'xlim', [0 1],...
+        'ylim', [0 1],...
+        'zlim',[0 1],...
+        'tickdir','out');
+set(ha,'xdir','reverse'); 
+set(ha(1),'view',[-160,45]);
+set(ha(2),'view',[-135,45]);
+set(ha(3),'view',[-110,45]);
+
+title(ha(1),'Left');
+title(ha(2),'NoGo');
+title(ha(3),'Right');
+
+%% Compare model with model which only fits one region
+fit_mech = load("C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\tp03f24ce4_5470_4181_b95f_cfaf8abe5b33.mat");
+
+%VIS only, set M2 firing to zero;
+dat = fit_mech.data;
+dat.firing_rate = fit_mech.data.firing_rate(:,1:2);
+fit_mech_VIS = bfit.fitModel('Two-Level-Mechanistic-SYMMETRICAL-2SITE',dat);
+
+%M2 only, set VIS firing to zero
+dat = fit_mech.data;
+dat.firing_rate = fit_mech.data.firing_rate(:,3:4);
+fit_mech_M2 = bfit.fitModel('Two-Level-Mechanistic-SYMMETRICAL-2SITE',dat);
+
+%Compare goodness of fit;
+fit_mech_VIS = load("C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\tpb07ebde0_d77c_4ac7_bba9_c54d9791995b.mat");
+fit_mech_M2 = load("C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\tp9cdf66f4_de44_4f81_81ab_061f6025d049.mat");
 
 %% Use mechanistic model to predict trial-by-trial choices
 %Look within a single contrast condition. Does spontaneous variation in ZL
