@@ -18,6 +18,19 @@ areaCols = [      0    0.4470    0.7410; %blue
 % %     fprintf('\n');
 % end
 
+%% Collate behavioural data (not used)
+[mice,~,subjID] = unique(sessionList.mouseName);
+
+D=struct;
+for sess = 1:height(sessionList)
+    eRef = sessionList.expRef{sess};
+    fprintf('Session %d %s\n',sess,eRef);
+    [dd,meta] = loadData(eRef);
+    dd.sessionID = ones(length(dd.response),1)*sess;
+    dd.subjectID = ones(length(dd.response),1)*subjID(sess);
+    D = addstruct(D,dd);
+end
+
 %% PREPROC: Behavioural data
 clearvars -except sessionList
 for sess = 1:height(sessionList)
@@ -98,6 +111,10 @@ for sess = 1:height(sessionList)
         rt = [mon-timings.t_stimOn]';
         trial.reactionTime_better = rt;
         
+        %Add wheel trace
+        trial.wheel_stimOn_t = D.wheel_stimulusOn_timesteps';
+        trial.wheel_stimOn = D.wheel_stimulusOn';
+        
         %%%%%%%%%%
         %%% Save %
         %%%%%%%%%%
@@ -127,6 +144,8 @@ for sess = 1:height(sessionList)
     row.choice = b.trial.choice(inclTrials)';
     row.RT = b.trial.reactionTime_better(inclTrials)';
     row.t_stimOn = b.timings.t_stimOn(inclTrials);
+    row.wheel_t = b.trial.wheel_stimOn_t(:,inclTrials)';
+    row.wheel = b.trial.wheel_stimOn(:,inclTrials)';
     row.sessionID = ones(size(row.choice))*sess;
     row.subjectID = ones(size(row.choice))*subjID(sess);
     allBehav = addstruct(allBehav, row);
@@ -258,10 +277,7 @@ for sess = 1:height(sessionList)
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         behavFile = [ './preproc/BEHAV_RT_Corrected/' eRef '.mat'];
         b = load(behavFile);
-%         stim_resp_set = [b.contrastLeft>0 b.contrastRight>0 b.choice];
         stim_resp_set = [b.contrastLeft b.contrastRight b.choice];
-        CLS = unique(b.contrastLeft);
-        CRS = unique(b.contrastRight);
         [stim_resp,~,stim_resp_id] = unique(stim_resp_set,'rows');
         
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -291,36 +307,41 @@ for sess = 1:height(sessionList)
         MAPstimT = stimT(stimsliceIdx); %actual slice times
         MAPmoveT = moveT(movesliceIdx); %actual slice times
         
-%         MAPstim = nan(size(svd.U_dff,1), size(svd.U_dff,2), length(MAPstimT), 2, 2, 3);
-%         MAPmove = nan(size(svd.U_dff,1), size(svd.U_dff,2), length(MAPmoveT), 2, 2, 3);
-        MAPstim = nan(size(svd.U_dff,1), size(svd.U_dff,2), length(MAPstimT), length(CLS), length(CRS), 3);
-        MAPmove = nan(size(svd.U_dff,1), size(svd.U_dff,2), length(MAPmoveT), length(CLS), length(CRS), 3);
-        for cond = 1:size(stim_resp,1)           
-            CL = stim_resp(cond,1)+1;
-            CR = stim_resp(cond,2)+1;
-            R = stim_resp(cond,3);
-            
-            %compute average periStimV and periMoveV
-            condIdx = stim_resp_id==cond;
-            
-            %Get average over trials
-            avgperiStimV = mean(periStimV(condIdx,:,:),1);
-            avgperiMoveV = mean(periMoveV(condIdx,:,:),1);
-            
-            %Baseline
-            avgperiStimV = avgperiStimV - mean( avgperiStimV(:,:,stimT<0),3); 
-            
-            %Take time slices
-            avgperiStimV = avgperiStimV(1,:,stimsliceIdx);
-            avgperiMoveV = avgperiMoveV(1,:,movesliceIdx);
-            
-            
-%             MAPstim(:,:,:,CL,CR,R) = svdFrameReconstruct(svd.U_dff, permute(avgperiStimV,[2 3 1]) );
-%             MAPmove(:,:,:,CL,CR,R) = svdFrameReconstruct(svd.U_dff, permute(avgperiMoveV,[2 3 1]) );
-            MAPstim(:,:,:,stim_resp(cond,1)==CLS,stim_resp(cond,2)==CRS,stim_resp(cond,3)) = svdFrameReconstruct(svd.U_dff, permute(avgperiStimV,[2 3 1]) );
-            MAPmove(:,:,:,stim_resp(cond,1)==CLS,stim_resp(cond,2)==CRS,stim_resp(cond,3)) = svdFrameReconstruct(svd.U_dff, permute(avgperiMoveV,[2 3 1]) );
+        %Get full set of contrast values for this subject
+        sessIDs = find(contains(sessionList.mouseName,eRef(14:end)));
+        dd2=struct;
+        for sess2 = 1:length(sessIDs)
+            [dd,meta] = loadData(sessionList.expRef{sessIDs(sess2)});
+            dd2 = addstruct(dd2,dd);
         end
- 
+        contrastVals = unique(dd2.stimulus(:)); %contrast values for all sessions for this subject
+        numContrastConds = length(contrastVals);
+        MAPstim = nan(size(svd.U_dff,1), size(svd.U_dff,2), length(MAPstimT), numContrastConds, numContrastConds, 3);
+        MAPmove = nan(size(svd.U_dff,1), size(svd.U_dff,2), length(MAPmoveT), numContrastConds, numContrastConds, 3);
+        for r = 1:3
+            for cl = 1:numContrastConds
+                for cr = 1:numContrastConds
+                    
+                    %compute average periStimV and periMoveV
+                    condIdx = b.contrastLeft==contrastVals(cl) & b.contrastRight==contrastVals(cr) & b.choice==r;
+                    
+                    %Get average over trials
+                    avgperiStimV = mean(periStimV(condIdx,:,:),1);
+                    avgperiMoveV = mean(periMoveV(condIdx,:,:),1);
+                    
+                    %Baseline
+                    avgperiStimV = avgperiStimV - mean( avgperiStimV(:,:,stimT<0),3);
+                    
+                    %Take time slices
+                    avgperiStimV = avgperiStimV(1,:,stimsliceIdx);
+                    avgperiMoveV = avgperiMoveV(1,:,movesliceIdx);
+                    
+                    MAPstim(:,:,:,cl,cr,r) = svdFrameReconstruct(svd.U_dff, permute(avgperiStimV,[2 3 1]) );
+                    MAPmove(:,:,:,cl,cr,r) = svdFrameReconstruct(svd.U_dff, permute(avgperiMoveV,[2 3 1]) );
+                end
+            end
+        end
+
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         %%%% Write aligned data to HDFS %%
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -371,7 +392,6 @@ for sess = 1:height(sessionList)
         end
     end
 end
-
 %% PREPROC: Identify bregma and ROIs for each mouse
 clearvars -except sessionList
 stack = cell(height(sessionList),1);
@@ -394,7 +414,7 @@ end
 
 %Average sessions for each mouse
 names = unique(sessionList.mouseName);
-for mouse = 5:length(names)
+for mouse = 1:length(names)
     sessIDs = find(contains(sessionList.mouseName, names{mouse}));
     
     imL = nanmean( cat(4,stack{sessIDs}), 4);
@@ -474,6 +494,328 @@ for mouse = 5:length(names)
         px(1).col = px(1).col + shiftX;
     end
 end
+
+%draw boundary of imaging window for each mouse
+%Average sessions for each mouse
+names = unique(sessionList.mouseName);
+for mouse =1:length(names)
+    sessIDs = find(contains(sessionList.mouseName, names{mouse}));
+    
+    figure;
+    imagesc(meanImgs{sessIDs(1)}); hold on;
+    [x,y]=getpts;
+    pg=polyshape(x,y);
+    plot(pg);
+    
+    mask_xy = [x y];
+    
+    %append to roi file
+    pxFile = [ './preproc/WF_ROI/' names{mouse} '.mat'];
+    save(pxFile,'mask_xy','-append');
+end
+
+%% Compute Decoding Maps at extracted coordinates 
+clearvars -except sessionList
+window_stim_aligned = [-0.2 0.8];
+window_move_aligned = [-0.3 0.3];
+
+% %Load standard coordset
+load('26CoordSet.mat','coordSet');
+coordSet = [coordSet; -coordSet(:,1), coordSet(:,2)];
+
+% %create high-res coordSet within these bounds
+% boundary_idx=boundary(coordSet(:,1), coordSet(:,2));
+% [x1,y1]=meshgrid(-3.5:0.2:3.5, -4:0.2:3); x1=x1(:); y1=y1(:);
+% inside = inpolygon(x1, y1, coordSet(boundary_idx,1), coordSet(boundary_idx,2));
+% coordSet = [x1(inside), y1(inside)];
+
+%create high-res grid across whole image
+[x1,y1]=meshgrid(-4:0.2:4, -5:0.2:3.5); x1=x1(:); y1=y1(:);
+coordSet = [x1, y1];
+
+
+pixSize = 0.0217; % mm/pix. This is for PCO edge 5.5 with 0.6x mag (as kilotrode)
+coordSet_pix = round(coordSet/pixSize);
+
+h = waitbar(0,'Please wait...');
+for sess = 1:height(sessionList)
+    
+    eRef = sessionList.expRef{sess};
+    fprintf('Session %d %s\n',sess,eRef);
+    decoding_file = [ './decoding/' eRef '.mat'];
+    if ~exist(decoding_file,'file')
+        %     wfAlignedFile = [ './preproc/WF_aligned/' eRef '_52COORDS.h5'];
+        %     if ~exist(wfAlignedFile,'file')
+        
+        wfSVDfile = [ './preproc/WF_SVD/' eRef '.mat'];
+        svd = load(wfSVDfile);
+        
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        %%%% Define stim+response combination groups %%
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        behavFile = [ './preproc/BEHAV_RT_Corrected/' eRef '.mat'];
+        b = load(behavFile);
+        stim_resp_set = [b.contrastLeft b.contrastRight b.choice];
+        [stim_resp,~,stim_resp_id] = unique(stim_resp_set,'rows');
+        
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        %%%% Epoch-aligned fluorescence %%%%%
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        stimulus_times = b.t_stimOn;
+        assert(all(diff(stimulus_times)>0),'Timestamps not monotonically increasing');
+        [~, stimT, periStimV, ~] = ...
+            eventLockedAvgSVD(svd.U_dff, svd.dV, svd.wfTime_dt,...
+            stimulus_times, stim_resp_id, window_stim_aligned);
+        
+        %     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        %     %%%% Get average Movement-aligned activity  %%
+        %     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        %     movement_times = stimulus_times + b.RT;
+        %     movement_times(isnan(movement_times)) = stimulus_times(isnan(movement_times)) + nanmedian(b.RT); %emulate nogo "movement" time
+        %     [~, moveT, periMoveV, ~] = ...
+        %         eventLockedAvgSVD(svd.U_dff, svd.dV, svd.wfTime_dt,...
+        %         movement_times, stim_resp_id, window_move_aligned);
+        
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        %%%% Get epoch-aligned values for EVERY TRIAL at the coordinates %%
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        numTrials = length(stim_resp_id);
+        ROIstim = nan(numTrials,size(coordSet,1),length(stimT));
+        
+        roiFile = [ './preproc/WF_ROI/' sessionList.mouseName{sess} '.mat'];
+        roi = load(roiFile);
+        bregma = roi.px(1);
+        
+%        
+        f=figure('name',eRef);
+        imagesc(svd.meanImg_registered);
+        
+        hold on;
+        bad_pixel = zeros(size(coordSet,1),1);
+        for r = 1:size(coordSet,1) %Go through each coordinate
+            
+            row = bregma.row - coordSet_pix(r,2);
+            col = bregma.col + coordSet_pix(r,1);
+            
+            %if coordinate is within the imaged region (defined by roi
+            %mask)
+            if inpolygon(col,row,roi.mask_xy(:,1),roi.mask_xy(:,2))
+                
+                plot(col,row,'k+');
+                thisU = squeeze(svd.U_dff(row, col, :));
+                for n = 1:numTrials
+                    ROIstim(n,r,:) = thisU'*squeeze(periStimV(n,:,:));
+                end
+            else
+                plot(col,row,'r+');
+                bad_pixel(r)=1; %mark coordinate as not used for this session
+            end
+            drawnow;
+%             waitbar(r/size(coordSet,1),h);
+        end
+%         close(h);
+        
+        %Now use data from those coordinates to decode various task
+        %variables for this session
+        labels = {'detect prob','stimL prob','stimR prob','stim prob','choice prob','stimL prob NG trials'};
+        decoding_probability = nan(size(coordSet,1),length(stimT),length(labels));
+        %Compute DP, SLP, SRP, SP, CP
+        decoded_variable = {b.choice<3,... %DP
+            b.contrastLeft>0,... %SLP
+            b.contrastRight>0,... %SRP
+            b.contrastLeft>0 | b.contrastRight>0,... %SP
+            b.choice(b.choice<3)==1,... %CP
+            b.contrastLeft(b.choice==3)>0}; %SLP on NoGo trials only
+        
+        splitting_condition = {[b.contrastLeft b.contrastRight],...
+            b.choice,...
+            b.choice,...
+            b.choice,...
+            [b.contrastLeft(b.choice<3,:) b.contrastRight(b.choice<3,:)],...
+            b.choice(b.choice==3)};
+        
+        
+        for p = 1:6
+            fprintf('\tComputing %s\n',labels{p});
+            [conds,~,trial_condition]=unique(splitting_condition{p},'rows');
+            dec = decoded_variable{p};
+            
+            %ensure a large enough number of trials to compute the statistic
+            q = crosstab(trial_condition, dec);
+            nComp = sum(q(:,1).*q(:,2));
+            if nComp>10
+                %create shuffle labels
+                shufLabels = cell(1,max(trial_condition));
+                for c = 1:max(trial_condition)
+                    idx = trial_condition==c;
+                    chA = dec & idx;
+                    nA = sum(chA);
+                    shufLabels{c} = (1:nA)';
+                end
+                
+                for coord = 1:size(coordSet,1)
+                    if bad_pixel(coord)==0
+                        
+                        for t = 1:length(stimT)
+                            if p==5 %CP exclude nogo trials
+                                activity = ROIstim(b.choice<3,coord,t);
+                            elseif p==6 %SP excludes L or R trials
+                                activity = ROIstim(b.choice==3,coord,t);
+                            else
+                                activity = ROIstim(:,coord,t);
+                            end
+                            decoding_probability(coord,t,p) = choiceProbShuf(activity, dec, trial_condition, shufLabels);
+                        end
+                    end
+                end
+            else
+                warning('%s has too few trials to compute %s',eRef,labels{p});
+            end
+        end
+        
+        save(decoding_file, 'decoding_probability','coordSet','stimT','labels');
+        set(f,'Units','Inches','renderer','painters');
+        pos = get(f,'Position');
+        set(f,'PaperPositionMode','Auto','PaperUnits','Inches','PaperSize',[pos(3), pos(4)])
+        print(f, [decoding_file(1:end-3) 'pdf'],'-dpdf','-r0')
+        close(f);
+    end
+    
+        waitbar(sess/height(sessionList),h);
+
+end
+close(h);
+%% Plot decoding maps
+load('ctxOutlines.mat','coords');
+load('./decoding/2016-11-29_1_Chain.mat','coordSet','stimT','labels');
+decoding_probability_all = nan(size(coordSet,1),length(stimT),6,height(sessionList)); 
+for sess = 1:height(sessionList)
+    
+    eRef = sessionList.expRef{sess};
+    fprintf('Session %d %s\n',sess,eRef);
+    
+    %LOAD decoding results here....
+    decoding_file = [ './decoding/' eRef '.mat'];
+    s=load(decoding_file);
+    decoding_probability_all(:,:,:,sess) = s.decoding_probability;
+end
+
+%Average decoding results across sessions...
+areaCols = [      0    0.4470    0.7410; %blue
+    0.3010    0.7450    0.9330; %lightblue
+    0.4660    0.6740    0.1880; %green
+    0.8500    0.3250    0.0980; %orange
+    0.4940    0.1840    0.5560; %purple
+    0.8 0.8 0.8]; %grey
+t_slices = [0 0.1 0.15 0.3];
+for p = 1:length(labels)
+    avg =nanmean(decoding_probability_all(:,:,p,:),4);
+    f=figure('position', [79 723 1690 273],'name',labels{p});
+%     subplot(1,1+length(t_slices),1); 
+%     plot(stimT,avg,'k-'); hold on;
+
+%     plot(ROI52stimT,avg([2:4 6:8 10:12 28:30 32:34 36:38],:),'-','Color',areaCols(1,:)); %VIS
+%     plot(ROI52stimT,avg([17 21 24:26 43 47 50:52],:),'-','Color',areaCols(3,:)); %M2
+%     plot(ROI52stimT,avg([22 23 48 49],:),'-','Color',areaCols(4,:)); %M1
+%     plot(ROI52stimT,avg([14:16 18:20 40:42 44:46],:),'-','Color',areaCols(4,:)); %S1
+%     text(-0.1,0.4,'VIS','color',areaCols(1,:));
+%     text(0,0.4,'M2','color',areaCols(3,:));
+%      text(0.1,0.4,'M1','color',areaCols(4,:));
+%      text(0.2,0.4,'S1','color',areaCols(5,:));
+%     ylabel(labels{p});
+%     xlim([stimT(1) stimT(end)]);
+    
+    for t = 1:length(t_slices)
+        time_idx = find(stimT>t_slices(t),1,'first');
+
+%         subplot(1,1+length(t_slices),1);
+%         line([1 1]*t_slices(t),get(gca,'ylim'))
+%         
+        subplot(1,length(t_slices),t); hold on;
+        h=scatter(coordSet(:,1),coordSet(:,2),200,'k','o','filled');
+        h.MarkerEdgeColor=[1 1 1]*0.75;
+        h.CData = avg(:, time_idx);
+        set(gca,'xtick','','ytick','','dataaspectratio',[1 1 1],'xlim',[-1 1]*5);
+        colormap(BlueWhiteRed); colorbar;
+          caxis(0.5 + [-1 1]*0.4);
+        title(t_slices(t));
+        
+
+        
+        %Ttest across all sessions combines (dumb method)
+        %add significance for whether probability is different from 0.5 
+        [~,pval] = ttest( permute(decoding_probability_all(:,time_idx,p,:),[4 1 2 3]) ,0.5,'tail','both');
+        h.SizeData = ones(length(pval),1);
+        h.SizeData(pval'>0.05)=10;
+        h.SizeData(pval'<0.05)=50;
+        h.SizeData(pval'<0.01)=100;
+        h.SizeData(pval'<0.001)=150;
+        h.SizeData = h.SizeData/20;
+        h.MarkerEdgeAlpha=0.1;
+        
+        %Nested anova allowing for session and subject hierarchy   
+        %ACTUALLY: can't do that because I have only one observation for
+        %each session/subject level
+%         dp = permute(decoding_probability_all(:,time_idx,p,:),[4 1 2 3]); %sess x coords
+%         dp = dp-0.5; %testing against 0
+%         [~,~,subjectID]=unique(sessionList.mouseName);
+%         sessionID = nan(height(sessionList),1);
+%         for subj = 1:max(subjectID)
+%             sessionID(subjectID==subj)=1:sum(subjectID==subj);
+%         end
+%         for coord = 1:size(decoding_probability_all,1)
+%             goodIdx = ~isnan(dp(:,coord));
+%             p=anovan( dp(goodIdx,coord), [sessionID(goodIdx) subjectID(goodIdx)], 'nested', [0 1;0 0],'varnames',{'sessionID' 'subjectID'})
+%             
+%         end
+        
+        keepCoords = zeros(size(coordSet,1),1);
+        %add contours
+        for q = 1:numel(coords) % coords is from ctxOutlines.mat
+            cx = coords(q).x/100 - 5.7;
+            cy = coords(q).y/100 - 5.4;
+            hxx=plot(cx,-cy, 'LineWidth', 0.5, 'Color', [1 1 1]*0.8, 'Tag', 'outline');
+            
+            %mark coordinates within these bounds
+            boundaryIdx=boundary(cx,-cy);
+            keepCoords(inpolygon(h.XData,h.YData,cx(boundaryIdx),-cy(boundaryIdx)))=1;
+        end
+        %remove datapoints outside contours;
+        h.SizeData(~keepCoords)=NaN;
+        
+        ylabel(labels{p});
+    end
+    
+    %save fig as pdf
+    set(f,'Units','Inches','renderer','painters');
+    pos = get(f,'Position');
+    set(f,'PaperPositionMode','Auto','PaperUnits','Inches','PaperSize',[pos(3), pos(4)])
+    print(f,    fullfile('C:\Users\Peter\OneDrive - University College London\Zatka-Haas et al\working\new_analyses\widefield_decoding',[labels{p} '.pdf']),'-dpdf','-r0')
+
+end
+
+
+    % plot Fluorescence at the 52 coords to check it's working 
+%     %             %CL=high, CR=0, Left choice. Check that Right VIS is firing as
+%     %             %expected.
+%     test = squeeze(mean(ROI52stim(b.contrastLeft>0 & b.contrastRight==0 & b.choice==1,:,:),1));
+%     
+%     times = ROI52stimT(ROI52stimT >= 0 & ROI52stimT < 0.5);
+%     times = times(1:10:end);
+%     figure('name',eRef,'position',[246 756 1387 166]);
+%     for tt = 1:length(times)
+%         
+%         subplot(1,ceil(length(times)/1),tt); hold on;
+%         
+%         h=scatter(coordSet(:,1),coordSet(:,2),50,'k','o','filled');
+%         h.MarkerEdgeColor=[1 1 1]*0.75;
+%         h.CData = test(:,ROI52stimT==times(tt));
+%         caxis([0 quantile(test(:),0.95)]);
+%         set(gca,'xtick','','ytick','','xcolor','w','ycolor','w','dataaspectratio',[1 1 1]);
+%         title(times(tt));
+%         %                 addAllenCtxOutlines([0 0], [-1 0], [1 1 1]*0.5, gca);
+%     end
+
 %% 0a) Load and prepare data for ONE session
 clearvars -except sessionList
 SESSIONID = 17;
@@ -521,8 +863,6 @@ ipsiIdx = b.contrastLeft==0 & b.contrastRight>0 & b.choice==2;
 ROIstim_norm = ROIstim ./ max( mean(ROIstim(contraIdx,:,:),1) ,[], 3 );
 
 disp('Data loaded');
-
-
 %% 0b) Load and prepare data for all sessions of one mouse (session average)
 clearvars -except sessionList
 mouse = 'Hench';
@@ -573,12 +913,17 @@ for sess = 1:length(sessIDs)
     MAPmoveStack{sess} = MAPmove;   
     contraIpsiIdxStack{sess} = (contraIdx + 2*ipsiIdx);
      
-    D = addstruct(D, loadData(eRef));
+%     D = addstruct(D, loadData(eRef));
 end
+
+b = allBehav;
 
 %Stack ROIs
 ROIstimStack = cat(1,ROIstimStack{:});
+ROIstim = ROIstimStack;
 contraIpsiIdxStack = cat(1,contraIpsiIdxStack{:});
+contraIdx = contraIpsiIdxStack == 1;
+ipsiIdx = contraIpsiIdxStack == 2;
 
 %Average map
 MAPstim = nanmean(cat(7,MAPstimStack{:}),7);
@@ -602,12 +947,11 @@ set(gca,'dataaspectratio',[1 1 1]);
 f.delete;
 
 disp('Data loaded');
-
 %% 0) Plot misc maps
-figure('color','w');
+figure('color','w','name',sprintf('Mouse %s, Stimulus Aligned', mouse));
 % ha = tight_subplot(4,length(MAPstimT),0,0.05,0);
-ha = tight_subplot(length(MAPstimT),4,0,0.05,0.05);
-numConds = 4;
+numConds = 5;
+ha = tight_subplot(length(MAPstimT),numConds,0,0.05,0.05);
 for i = 1:length(MAPstimT)
     
     %C0 and NOGO
@@ -643,65 +987,14 @@ for i = 1:length(MAPstimT)
     hold(ha(idx),'on'); plot(ha(idx),bregma.col,bregma.row,'k.');
     
     
-%     %CL and NOGO - %C0 and NOGO
-%     idx = i + 3*length(MAPstimT);
-%     im1 = nanmean(MAPstim(:,:,i,2:end,1,3),4); 
-%     im2 = MAPstim(:,:,i,1,1,3);
-%     im = (im1 - im2).*mask;
-%     imx=imagesc( ha(idx), im ); alpha(imx,mask);
-%     addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*0.5, ha(idx));
-%     hold(ha(idx),'on'); plot(ha(idx),bregma.col,bregma.row,'k.');
-%     
-%     
-%     %CL and LEFT - %CL and NOGO
-%     idx = i + 4*length(MAPstimT);
-%     im1 = nanmean(MAPstim(:,:,i,2:end,1,1),4);
-%     im2 = nanmean(MAPstim(:,:,i,2:end,1,3),4);
-%     im = (im1 - im2).*mask;
-%     imx=imagesc( ha(idx), im ); alpha(imx,mask);
-%     addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*0.5, ha(idx));
-%     hold(ha(idx),'on'); plot(ha(idx),bregma.col,bregma.row,'k.');
-    
-%     %CR and NOGO
-%     idx = i + 3*length(MAPstimT);
-%     im = nanmean(MAPstim(:,:,i,1,2:end,3),5).*mask;
-%     imx=imagesc( ha(idx), im ); alpha(imx,mask);
-%     addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*0.5, ha(idx));
-%     hold(ha(idx),'on'); plot(ha(idx),bregma.col,bregma.row,'k.');
-% 
-%     %CR and RIGHT
-%     idx = i + 4*length(MAPstimT);
-%     im = nanmean(MAPstim(:,:,i,1,2:end,2),5).*mask;
-%     imx=imagesc( ha(idx), im ); alpha(imx,mask);
-%     addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*0.5, ha(idx));
-%     hold(ha(idx),'on'); plot(ha(idx),bregma.col,bregma.row,'k.');
-%     
-    
-
-%     %CL and LEFT - CL and NOGO
-%     im1 = nanmean(MAPstim(:,:,i,2:end,1,1),4);
-%     im2 = nanmean(MAPstim(:,:,i,2:end,1,3),4);
-%     im3L = (im1 - im2).*mask;
-%     idx = i + 3*length(MAPstimT);
-%     imx= imagesc( ha(idx), im3L );  alpha(imx,mask);
-%     addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*0.5,ha(idx));
-%     hold(ha(idx),'on'); plot(ha(idx),bregma.col,bregma.row,'k.')
-%     
-%     %CR and RIGHT - CR and NOGO
-%     im1 = nanmean(MAPstim(:,:,i,1,2:end,2),5);
-%     im2 = nanmean(MAPstim(:,:,i,1,2:end,3),5);
-%     im3R = (im1 - im2).*mask;
-%     idx = i + 4*length(MAPstimT);
-%     imx= imagesc( ha(idx), im3R );  alpha(imx,mask);
-%     addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*0.5,ha(idx));
-%     hold(ha(idx),'on'); plot(ha(idx),bregma.col,bregma.row,'k.')
-% 
-%     im = im3R - im3L;
-%     idx = i + 5*length(MAPstimT);
-%     imx= imagesc( ha(idx), im );  alpha(imx,mask);
-%     addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*0.5,ha(idx));
-%     hold(ha(idx),'on'); plot(ha(idx),bregma.col,bregma.row,'k.')
-
+    % CL and NOGO - %CR and NOGO
+    idx = numConds*(i-1) + 5;
+    im1 = nanmean(MAPstim(:,:,i,2:end,1,3),4);
+    im2 = nanmean(MAPstim(:,:,i,1,2:end,3),5);
+    im = (im1 - im2).*mask;
+    imx=imagesc( ha(idx), im ); alpha(imx,mask);
+    addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*0.5, ha(idx));
+    hold(ha(idx),'on'); plot(ha(idx),bregma.col,bregma.row,'k.');
 
 end
 colormap(BlueWhiteRed(100,1));
@@ -713,10 +1006,9 @@ set(ha,'color',[1 1 1]*0.8);
 
 
 
-figure('color','w');
-% ha = tight_subplot(4,length(MAPmoveT),0,0.05,0);
-ha = tight_subplot(length(MAPmoveT),4,0,0.05,0.05);
-numConds = 4;
+figure('color','w','name',sprintf('Mouse %s, Movement Aligned', mouse));
+numConds = 5;
+ha = tight_subplot(length(MAPmoveT),numConds,0,0.05,0.05);
 for i = 1:length(MAPmoveT)
     
     %C0 and NOGO
@@ -752,6 +1044,15 @@ for i = 1:length(MAPmoveT)
     addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*0.5, ha(idx));
     hold(ha(idx),'on'); plot(ha(idx),bregma.col,bregma.row,'k.');
 
+    % CL and NOGO - %CR and NOGO
+    idx = numConds*(i-1) + 5;
+    im1 = nanmean(MAPmove(:,:,i,2:end,1,3),4);
+    im2 = nanmean(MAPmove(:,:,i,1,2:end,3),5);
+    im = (im1 - im2).*mask;
+    imx=imagesc( ha(idx), im ); alpha(imx,mask);
+    addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*0.5, ha(idx));
+    hold(ha(idx),'on'); plot(ha(idx),bregma.col,bregma.row,'k.');
+    
 end
 colormap(BlueWhiteRed(100,1));
 set(ha,'clim',[-1 1]*quantile(abs(MAPmove(:)),0.98));
@@ -790,81 +1091,154 @@ areaCols = [      0    0.4470    0.7410; %blue
     0.4940    0.1840    0.5560; %purple
     0.8 0.8 0.8]; %grey
 
-figure(101);
-ha = tight_subplot(5,1,0.01,[0.05 0.35],[0.05 0.66]);
-for p =1:5
-    hold(ha(p),'on');
+figure;
+ha = tight_subplot(6,3,0.01,0.1,0.1);
+%Plot wheel traces for this session
+t = b.wheel_t(1,:);
+pos = b.wheel;
+dt = t(2)-t(1);
+smooth_t = 10/1000;  %10ms smoothing
+smoothWin = myGaussWin(smooth_t, 1/dt); 
+vel = [zeros(size(pos,1),1) conv2(diff(pos,[],2), smoothWin', 'same')]/dt;
+
+hold(ha(1),'on');
+plot( ha(1), t, vel(contraIdx,:), '-', 'Color', [1 1 1]*0.3);
+plot( ha(1), t, mean(vel(contraIdx,:),1), 'k-', 'linewidth',3);
+plot( ha(1), t, vel(ipsiIdx,:), '-', 'Color', [1 1 1]*0.7);
+plot( ha(1), t, mean(vel(ipsiIdx,:),1), 'k-', 'linewidth',1);
+set(ha(1),'xcolor','none');
+line(ha(1), [0 0], [-1 1]*1000, 'color', [0 0 0 0.1],'LineStyle','-');
+ylim(ha(1), [min(vel(:)) max(vel(:))]);
+
+%compute peak velocity
+vel_zerod = vel;
+vel_zerod(:,t<=0)=0; %Zero velocity before stimulus, to help with peak velocity detection.
+peakvel = nan(size(b.choice));
+peakvel_time = nan(size(peakvel));
+peakvel_fluorescence = nan(size(b.choice,1),5);
+t_delay = 0/1000; %delay after peak time to get fluorescence (allowing for GC6s slowness)
+for tr = 1:length(b.choice)
     
-    if exist('ROIstimStack','var')
-        avg = squeeze( mean( ROIstimStack(contraIpsiIdxStack==1,p,:) ,1) )';
-%         err = mad( ROIstimStack(p,:,2,1,1,:),1,6);
-        err = squeeze( std( ROIstimStack(contraIpsiIdxStack==1,p,:) ,[],1) )';
-        
-        fill(ha(p),[ROIstimT fliplr(ROIstimT)],[avg-err fliplr(avg+err)],'k','FaceColor',areaCols(p,:),'FaceAlpha',0.3,'EdgeAlpha',0 )
-        plot(ha(p), ROIstimT, avg, 'k-', 'color', areaCols(p,:),'linewidth',3 );
-        
-        avg = squeeze( mean( ROIstimStack(contraIpsiIdxStack==2,p,:) ,1) )';
-%         err = mad( ROIstimStack(p,:,2,1,1,:),1,6);
-        err = squeeze( std( ROIstimStack(contraIpsiIdxStack==2,p,:) ,[],1) )';
-        fill(ha(p),[ROIstimT fliplr(ROIstimT)],[avg-err fliplr(avg+err)],'k','FaceColor',areaCols(p,:),'FaceAlpha',0.3,'EdgeAlpha',0 )
-        plot(ha(p), ROIstimT, avg, 'k-', 'color', areaCols(p,:),'linewidth',1 );
-    else
-        plot(ha(p), ROIstimT, squeeze(mean(ROIstim(contraIdx,p,:),1)), 'k-', 'color', areaCols(p,:),'linewidth',3 );
-        plot(ha(p), ROIstimT, squeeze(mean(ROIstim(ipsiIdx,p,:),1)), 'k-', 'color', areaCols(p,:),'linewidth',1 );
+    if b.choice(tr)==1
+        [peakvel(tr),peakvel_time(tr)]=findpeaks(vel_zerod(tr,:)/max(vel_zerod(tr,:)),t,'NPeaks',1,'MinPeakHeight',0.3);
+        peakvel(tr) = peakvel(tr) * max(vel_zerod(tr,:));
+    elseif b.choice(tr)==2
+        [peakvel(tr),peakvel_time(tr)]=findpeaks(-vel_zerod(tr,:)/max(-vel_zerod(tr,:)),t,'NPeaks',1,'MinPeakHeight',0.3);
+        peakvel(tr) = peakvel(tr) * max(-vel_zerod(tr,:));
+%         peakvel(tr) = -peakvel(tr);
     end
-    set(ha(p),'xcolor','none','ycolor','none');
-    line(ha(p), [0 0], [-1 1]*10, 'color', [0 0 0 0.1],'LineStyle','-');
+    
+    %Compute the fluorescence at those peak velocity times
+    for p = 1:5
+        peakvel_fluorescence(tr,p)=interp1(ROIstimT,squeeze(ROIstim(tr,p,:)),peakvel_time(tr) + t_delay);
+    end
+end
+
+
+%Plot dF/F fluorescence for the ROIs
+for p =1:5
+    hold(ha(3 + (3*(p-1)) + 1),'on');
+    
+    %Plot contra
+    dat = permute( ROIstim(contraIdx,p,:), [1 3 2]);
+    avg = mean(dat,1);
+%     err = std(dat,[],1)/sqrt(size(dat,1));
+    err = std(dat,[],1);
+
+    plot(ha(3 + (3*(p-1)) + 1), ROIstimT, avg, 'k-', 'color', areaCols(p,:),'linewidth',3 );
+    fill(ha(3 + (3*(p-1)) + 1), [ROIstimT fliplr(ROIstimT)], [avg-err fliplr(avg+err)], 'k', 'FaceAlpha',0.2,'FaceColor',areaCols(p,:),'EdgeAlpha',0)
+    
+    %add latency dot
+    dotIdx = find(avg/max(avg) > 0.25, 1,'first');
+    plot(ha(3 + (3*(p-1)) + 1),ROIstimT(dotIdx), avg(dotIdx), 'o', 'color', areaCols(p,:));
+    
+    %Plot ipsi
+    dat = permute( ROIstim(ipsiIdx,p,:), [1 3 2]);
+    avg = mean(dat,1);
+%     err = std(dat,[],1)/sqrt(size(dat,1));
+        err = std(dat,[],1);
+
+    plot(ha(3 + (3*(p-1)) + 1), ROIstimT, avg, 'k-', 'color', areaCols(p,:),'linewidth',1 );
+    fill(ha(3 + (3*(p-1)) + 1), [ROIstimT fliplr(ROIstimT)], [avg-err fliplr(avg+err)], 'k', 'FaceAlpha',0.2,'FaceColor',areaCols(p,:),'EdgeAlpha',0)
+    
+
+    % plot peak wheel vel against fluorescence, see if there's a
+    % correlation
+    plot(ha(3 + (3*(p-1)) + 2), peakvel(contraIdx), peakvel_fluorescence(contraIdx,p), '.', 'color', areaCols(p,:));
+    lsline(ha(3 + (3*(p-1)) + 2));
+    [rho,pval]=corr(peakvel(contraIdx), peakvel_fluorescence(contraIdx,p), 'rows','complete');
+    text(ha(3 + (3*(p-1)) + 2), 0,0.01,sprintf('r=%0.2f (p=%0.2f)',rho,pval));
+
+    
+
+    plot(ha(3 + (3*(p-1)) + 3), peakvel(ipsiIdx), peakvel_fluorescence(ipsiIdx,p), '.', 'color', areaCols(p,:));
+    lsline(ha(3 + (3*(p-1)) + 3));
+    [rho,pval]=corr(peakvel(ipsiIdx), peakvel_fluorescence(ipsiIdx,p), 'rows','complete');
+    text(ha(3 + (3*(p-1)) + 3), 0,0.01,sprintf('r=%0.2f (p=%0.2f)',rho,pval));
+    
+    
+
+    set(ha(3 + (3*(p-1)) + 1),'xcolor','none','ycolor','none');
+    line(ha(3 + (3*(p-1)) + 1), [0 0], [-1 1]*10, 'color', [0 0 0 0.1],'LineStyle','-');
  
     %Add text in top left corner
-    tx=text(ha(p),-0.2,0.01,roi.px(p).name,'VerticalAlignment','top','color',areaCols(p,:),'FontWeight','bold');
+    tx=text(ha(3 + (3*(p-1)) + 1),-0.2,0.01,roi.px(p).name,'VerticalAlignment','top','color',areaCols(p,:),'FontWeight','bold');
 end
 line(ha(end), [0 0], [0 1], 'color', [0 0 0 0.1],'LineStyle','-');
 line(ha(end), [0 0], [0 1], 'color', [0 0 0 0.1],'LineStyle','-');
-linkaxes(ha,'y');
-ylim(ha(1),[-0.001 0.011]);
-set(ha(end),'xcolor','k','XTickLabelMode','auto','ycolor','k','yTickLabelMode','auto');
+linkaxes(ha(4:3:end),'y');
+ylim(ha(4),[-0.002 0.010]);
+set(ha(16),'xcolor','k','XTickLabelMode','auto','ycolor','k','yTickLabelMode','auto');
+linkaxes(ha(4:3:end),'x');
+xlim(ha(1:3:end),[-0.2 0.8]);
+xlabel(ha(16),'Stim onset');
+ylabel(ha(16),'d/dt ( dF/F )');
+ylabel(ha(1),'wheel vel (mm/s)');
 
-linkaxes(ha,'x');
-xlim(ha(end),[-0.2 0.8]);
-xlabel(ha(end),'Stim onset');
-ylabel(ha(end),'d/dt ( dF/F )');
+linkaxes(ha(setdiff(1:18,1:3:18)),'xy');
+xlim(ha(5),[0 300]);
+ylim(ha(5),[-0.5 1.5]*0.010);
+axis(ha(setdiff(1:18,1:3:18)),'square');
+set(ha(setdiff(1:17,1:3:17)),'xtick','','ytick','');
 
-%meanimg and normalised traces
-ha = tight_subplot(3,1,0.01,[0.05 0.35],[0.35 0.35]);
-imagesc(ha(1),svd.meanImg_registered); colormap(ha(1),'gray'); hold(ha(1),'on');
-addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*0.5, ha(1));
-plot(ha(1),bregma.col,bregma.row,'k.')
-for p =1:5
-    h = plot(ha(1),roi.px(p).col, roi.px(p).row, '.', 'Color', areaCols(p,:), 'markersize',25);
-end
-set(ha(1),'xcolor','none','ycolor','none', 'dataaspectratio', [1 1 1]);
+% 
+% %meanimg and normalised traces
+% ha = tight_subplot(3,1,0.01,[0.05 0.35],[0.35 0.35]);
+% imagesc(ha(1),svd.meanImg_registered); colormap(ha(1),'gray'); hold(ha(1),'on');
+% addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*0.5, ha(1));
+% plot(ha(1),bregma.col,bregma.row,'k.')
+% for p =1:5
+%     h = plot(ha(1),roi.px(p).col, roi.px(p).row, '.', 'Color', areaCols(p,:), 'markersize',25);
+% end
+% set(ha(1),'xcolor','none','ycolor','none', 'dataaspectratio', [1 1 1]);
+% 
+% hold(ha(2),'on'); hold(ha(3),'on');
+% for p =1:5
+%     if exist('ROIstimStack_norm','var')
+%         avg = mean(ROIstimStack_norm(p,:,2,1,1,:),6);
+%          err = std( ROIstimStack_norm(p,:,2,1,1,:),[],6);
+%          
+%         fill(ha(2),[wf.stimT fliplr(wf.stimT)],[avg-err fliplr(avg+err)],'k','FaceColor',areaCols(p,:),'FaceAlpha',0.3,'EdgeAlpha',0 )
+%         hxx=plot(ha(2), wf.stimT, avg, '-','linewidth',3, 'color', areaCols(p,:));
+%         uistack(hxx,'bottom');
+%         
+%         avg = mean(ROIstimStack_norm(p,:,1,2,2,:),6);
+%         err = std( ROIstimStack_norm(p,:,1,2,2,:),[],6);
+%          
+%         fill(ha(3),[wf.stimT fliplr(wf.stimT)],[avg-err fliplr(avg+err)],'k','FaceColor',areaCols(p,:),'FaceAlpha',0.3,'EdgeAlpha',0 )
+%         hxx=plot(ha(3), wf.stimT, avg, '-','linewidth',1, 'color', areaCols(p,:));
+%         uistack(hxx,'bottom');
+%     else
+%         hxx=plot(ha(2), ROIstimT, squeeze(mean(ROIstim_norm(contraIdx,p,:),1)), '-','linewidth',3, 'color', areaCols(p,:));
+%         uistack(hxx,'bottom');
+%         hxx=plot(ha(3), ROIstimT, squeeze(mean(ROIstim_norm(ipsiIdx,p,:),1)), '-','linewidth',1, 'color', areaCols(p,:));
+%         uistack(hxx,'bottom');
+%     end
+% end
+% line(ha(2), [0 0], [0 1], 'color', [0 0 0 0.1],'LineStyle','-');
+% line(ha(3), [0 0], [0 1], 'color', [0 0 0 0.1],'LineStyle','-');
+% set(ha(2:3),'ylim',[-0.1 1.1],'xlim',[-0.2 0.8]);
 
-hold(ha(2),'on'); hold(ha(3),'on');
-for p =1:5
-    if exist('ROIstimStack_norm','var')
-        avg = mean(ROIstimStack_norm(p,:,2,1,1,:),6);
-         err = std( ROIstimStack_norm(p,:,2,1,1,:),[],6);
-         
-        fill(ha(2),[wf.stimT fliplr(wf.stimT)],[avg-err fliplr(avg+err)],'k','FaceColor',areaCols(p,:),'FaceAlpha',0.3,'EdgeAlpha',0 )
-        hxx=plot(ha(2), wf.stimT, avg, '-','linewidth',3, 'color', areaCols(p,:));
-        uistack(hxx,'bottom');
-        
-        avg = mean(ROIstimStack_norm(p,:,1,2,2,:),6);
-        err = std( ROIstimStack_norm(p,:,1,2,2,:),[],6);
-         
-        fill(ha(3),[wf.stimT fliplr(wf.stimT)],[avg-err fliplr(avg+err)],'k','FaceColor',areaCols(p,:),'FaceAlpha',0.3,'EdgeAlpha',0 )
-        hxx=plot(ha(3), wf.stimT, avg, '-','linewidth',1, 'color', areaCols(p,:));
-        uistack(hxx,'bottom');
-    else
-        hxx=plot(ha(2), ROIstimT, squeeze(mean(ROIstim_norm(contraIdx,p,:),1)), '-','linewidth',3, 'color', areaCols(p,:));
-        uistack(hxx,'bottom');
-        hxx=plot(ha(3), ROIstimT, squeeze(mean(ROIstim_norm(ipsiIdx,p,:),1)), '-','linewidth',1, 'color', areaCols(p,:));
-        uistack(hxx,'bottom');
-    end
-end
-line(ha(2), [0 0], [0 1], 'color', [0 0 0 0.1],'LineStyle','-');
-line(ha(3), [0 0], [0 1], 'color', [0 0 0 0.1],'LineStyle','-');
-set(ha(2:3),'ylim',[-0.1 1.1],'xlim',[-0.2 0.8]);
 
 %% 3) Plot latencies over all sessions TODO
 mice={'Chain','Radnitz','Cori','Reichstein','Hench'};
@@ -1503,6 +1877,273 @@ fit_mech = bfit.fitModel('Two-Level-Mechanistic-SYMMETRICAL',dat);
 % Fit original phenomenological model:
 % fit_phen = bfit.fitModel('Two-Level',dat);
 %need to fix model code...
+
+%% Fit cross-predict model WITH M1
+ 
+%1) convert widefield to ephys firing using translation
+
+%load dual dataset
+fr = load("C:\Users\Peter\Documents\MATLAB\inactPaper\widefield\mechanistic_fit\visMOs_allConds.mat");
+
+VIS_window = [0.075 0.125];
+MOS_window = [0.125 0.175];
+MOp_window = [0.125 0.175];
+wf_window_delay = 0.03;
+
+%get ephys data at critical timewindow
+vis = mean( mean( fr.vis(:,:,:,VIS_window(1) < fr.binsS & fr.binsS < VIS_window(2)), 4), 3);
+m2 = mean( mean( fr.mos(:,:,:,MOS_window(1) < fr.binsS & fr.binsS < MOS_window(2)), 4), 3);
+
+
+%get widefield data at critical timewindow
+dat = struct;
+[names,~,mouseID]=unique(sessionList.mouseName);
+for sess = 1:height(sessionList)
+    eRef = sessionList.expRef{sess};
+    fprintf('Session %d %s\n',sess,eRef);
+    
+    %Load behavioural data
+    behavFile = [ './preproc/BEHAV_RT_Corrected/' eRef '.mat'];
+    b = load(behavFile);
+    
+    %Load meanImage
+    wfSVDfile = [ './preproc/WF_SVD/' eRef '.mat'];
+    svd = load(wfSVDfile,'meanImg_registered');
+    
+    %Load ROI locations
+    roiFile = [ './preproc/WF_ROI/' sessionList.mouseName{sess} '.mat'];
+    roi = load(roiFile); roi.px(1)=[];
+    
+    areaIdx = [find(contains({roi.px.name},'LVISp')),...
+            find(contains({roi.px.name},'RVISp')),...
+            find(contains({roi.px.name},'LMOs')),...
+            find(contains({roi.px.name},'RMOs')),...
+            find(contains({roi.px.name},'LMOp')),...
+            find(contains({roi.px.name},'RMOp'))];   
+    
+    %Load epoch-aligned data
+    wfAlignedFile = [ './preproc/WF_aligned/' eRef '.h5'];
+    ROIstim = h5read(wfAlignedFile,'/ROIstim');
+    ROIstimT = h5read(wfAlignedFile,'/ROIstimT');
+    
+    ROIstim(ROIstim<0) = 0; %Rectify
+    
+    %Get ROI only at L and R VIS and MOs, averaging over the specified
+    %timewindow
+    avgF = [];
+    avgF(:,1:2) = mean( ROIstim(:, areaIdx(1:2), (VIS_window(1)+wf_window_delay) <= ROIstimT & ROIstimT <= (VIS_window(2)+wf_window_delay)), 3);
+    avgF(:,3:4) = mean( ROIstim(:, areaIdx(3:4), (MOS_window(1)+wf_window_delay) <= ROIstimT & ROIstimT <= (MOS_window(2)+wf_window_delay)), 3);
+    avgF(:,5:6) = mean( ROIstim(:, areaIdx(5:6), (MOp_window(1)+wf_window_delay) <= ROIstimT & ROIstimT <= (MOp_window(2)+wf_window_delay)), 3);
+
+%     avgF(avgF<0)=0; % rectify
+    
+    row=struct;
+    row.firing_rate = avgF;
+    row.choice = b.choice;
+    row.subjectID = ones(size(row.choice))*mouseID(sess);
+    row.sessionID = ones(size(row.choice))*sess;
+    row.contrastLeft = b.contrastLeft;
+    row.contrastRight = b.contrastRight;
+    row.RT = b.RT;
+    dat = addstruct(dat, row);
+end
+
+%create average widefield firing for the 16 contrast conditions
+vis_wf = nan(size(vis));
+m2_wf = nan(size(m2));
+m1_wf = nan(size(m2));
+for cl = 1:length(fr.ucl)
+    for cr = 1:length(fr.ucr)
+        vis_wf(cr,cl) = mean( dat.firing_rate( dat.contrastLeft==fr.ucl(cl) & dat.contrastRight==fr.ucr(cr) ,1) ,1); %Left VIS
+        m2_wf(cr,cl) = mean( dat.firing_rate( dat.contrastLeft==fr.ucl(cl) & dat.contrastRight==fr.ucr(cr) ,3) ,1);%Left MOS
+        m1_wf(cr,cl) = mean( dat.firing_rate( dat.contrastLeft==fr.ucl(cl) & dat.contrastRight==fr.ucr(cr) ,5) ,1);%Left MOP
+    end
+end
+
+%Plot ephys and widefield across the contrast conditions
+figure('color','w');
+ha = tight_subplot(2,3,0.1,0.1,0.1);
+imagesc(ha(1), vis); 
+imagesc(ha(2), m2);title(ha(2),'LM2 ephys');
+imagesc(ha(4), vis_wf);title(ha(4),'LVIS widefield'); 
+imagesc(ha(5), m2_wf);title(ha(5),'LM2 widefield'); 
+imagesc(ha(6), m1_wf);title(ha(6),'LM1 widefield'); 
+set(ha,'dataaspectratio',[1 1 1]);
+xlabel(ha(1),'CL'); ylabel(ha(1),'CR'); 
+title(ha(1),sprintf('ephys LVIS %0.2d-%0.2dms',1000*VIS_window(1),1000*VIS_window(2)));
+title(ha(2),sprintf('ephys LM2 %0.2d-%0.2dms',1000*MOS_window(1),1000*MOS_window(2)));
+title(ha(4),sprintf('widefield LVIS %0.2d-%0.2dms',1000*VIS_window(1) + 1000*wf_window_delay,1000*VIS_window(2) + 1000*wf_window_delay));
+title(ha(5),sprintf('widefield LM2 %0.2d-%0.2dms',1000*MOS_window(1)+ 1000*wf_window_delay,1000*MOS_window(2)+ 1000*wf_window_delay));
+set(ha,'xtick', 1:4, 'ytick', 1:4, 'xticklabel', fr.ucl, 'yticklabel', fr.ucl, 'ydir','normal');
+
+figure('color','w');
+subplot(1,2,1); plot(vis_wf(:),vis(:),'ko'); xlabel('VIS widefield (dF/F)'); ylabel('VIS ephys (sp/sec)'); lsline; axis square;
+subplot(1,2,2); plot(m2_wf(:),m2(:),'ko'); xlabel('M2 widefield (dF/F)'); ylabel('M2 ephys (sp/sec)');lsline; axis square;
+set(get(gcf,'children'),'box','off');
+
+%Fit translation
+vis_fit = polyfit( vis_wf(:), vis(:), 1);
+m2_fit = polyfit(m2_wf(:), m2(:), 1 );
+
+%convert widefield firing to ephys firing using fits
+dat.firing_rate(:,1:2) = vis_fit(2) + vis_fit(1)*dat.firing_rate(:,1:2);
+dat.firing_rate(:,3:4) = m2_fit(2) + m2_fit(1)*dat.firing_rate(:,3:4);
+
+%Use M1 fit to transform the M2 data to spiking rate <<<--- BIG
+%ASSUMPTION!!!!
+dat.firing_rate(:,5:6) = m2_fit(2) + m2_fit(1)*dat.firing_rate(:,5:6);
+
+% %rectify
+dat.firing_rate(dat.firing_rate<0) = 0;
+
+% plot by contrast for each trial
+figure('color','w');
+ha = tight_subplot(2,4,0.03,0.01,0.01);
+uCL = [0 0.5 1];
+uCR = [0 0.5 1];
+hold(ha(4),'on'); hold(ha(8),'on');
+for r = 1:3
+    %VIS
+    hold(ha(r),'on');
+    m = nan( length(uCL), length(uCR), 2);
+    for cl = 1:length(uCL)
+        for cr = 1:length(uCR)
+            idx = dat.choice == r & dat.contrastLeft == uCL(cl) & dat.contrastRight == uCR(cr);
+            
+            hx1 = scatter(ha(r), dat.firing_rate(idx,1), dat.firing_rate(idx,2),10,'filled' );
+            hx1.MarkerFaceColor = 1*[uCR(cr) 0 uCL(cl)];
+            
+            hx2 = scatter(ha(r), mean(dat.firing_rate(idx,1)), mean(dat.firing_rate(idx,2)),100, 'filled' );
+            hx2.MarkerFaceColor = [uCR(cr) 0 uCL(cl)];
+            hx2.MarkerEdgeColor='w'; hx2.LineWidth = 2;
+            uistack(hx1,'bottom');
+            m(cl,cr,:) = mean(dat.firing_rate(idx,1:2)); 
+        end
+    end
+    plot(ha(r),m(:,:,1),m(:,:,2),'k-');
+    plot(ha(r),m(:,:,1)',m(:,:,2)','k-');
+    xlabel(ha(r),'VIS_L'); ylabel(ha(r),'VIS_R');
+    
+    cols = {'b','r','k'};
+    hxx = plot(ha(4),m(:,:,1),m(:,:,2),'-');
+    set(hxx,'color',cols{r});
+    hxx = plot(ha(4),m(:,:,1)',m(:,:,2)','-');
+    set(hxx,'color',cols{r});
+
+    
+    %MOs
+    hold(ha(r+4),'on');
+    m = nan( length(uCL), length(uCR), 2);
+    for cl = 1:length(uCL)
+        for cr = 1:length(uCR)
+            idx = dat.choice == r & dat.contrastLeft == uCL(cl) & dat.contrastRight == uCR(cr);
+            
+            hx1 = scatter(ha(r+4), dat.firing_rate(idx,3), dat.firing_rate(idx,4),10,'filled' );
+            hx1.MarkerFaceColor = 1*[uCR(cr) 0 uCL(cl)];
+            
+            hx2 = scatter(ha(r+4), mean(dat.firing_rate(idx,3)), mean(dat.firing_rate(idx,4)),100, 'filled' );
+            hx2.MarkerFaceColor = [uCR(cr) 0 uCL(cl)];
+            hx2.MarkerEdgeColor='w'; hx2.LineWidth = 2;
+            uistack(hx1,'bottom');
+            m(cl,cr,:) = mean(dat.firing_rate(idx,3:4)); 
+        end
+    end
+    plot(ha(r+4),m(:,:,1),m(:,:,2),'k-');
+    plot(ha(r+4),m(:,:,1)',m(:,:,2)','k-');
+    xlabel(ha(r+4),'MOS_L'); ylabel(ha(r+4),'MOS_R');
+    
+    hxx = plot(ha(8),m(:,:,1),m(:,:,2),'-');
+    set(hxx,'color',cols{r});
+    hxx = plot(ha(8),m(:,:,1)',m(:,:,2)','-');
+    set(hxx,'color',cols{r});
+end
+linkaxes(ha,'xy');
+title(ha(1),'Left choice');
+title(ha(2),'Right choice');
+title(ha(3),'NoGo');
+set(ha,'dataaspectratio',[1 1 1]);
+
+%2) Fit mechanistic model
+fit_mech = bfit.fitModel('Two-Level-Mechanistic-SYMMETRICAL-6SITE',dat);
+fit_mech = load('C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\tp02609361_37c8_4ff1_833a_9c9e5fd3dfba.mat'); %original 4, M1 set to zero
+fit_mech = load('C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\tp8351b82a_2284_4ec9_bddc_4021518a006b.mat'); %All 6, including M1
+
+%3) Plot weights
+areaCols = [ 109 183 229;
+                77 131 158;
+                160 206 87;
+             119 147 62;
+              50 50 50;
+              100 100 100]/255;
+         
+WL = fit_mech.posterior.w(:,2+[1:6]);
+WR = fit_mech.posterior.w(:,2+[2 1 4 3 6 5]);
+figure('color','w');
+axes; hold on;
+x1 = linspace(-0.3,0.3,1000);
+for region = 1:6
+    mu = mean([WL(:,region), WR(:,region)]);
+    Sigma = cov([WL(:,region), WR(:,region)]);
+    [X1,X2] = meshgrid(x1);
+    F = mvnpdf([X1(:) X2(:)],mu,Sigma);
+    F = reshape(F,length(x1),length(x1));
+    [c1,c2]=contour(x1,x1,F,8);
+    c2.LineColor = areaCols(region,:);
+    c2.LineWidth=1;
+end
+set(gca,'dataaspectratio',[1 1 1]);
+line([0 0],[-1 1]*0.5); line([-1 1]*0.5,[0 0]);
+hh=ezplot('y=x'); hh.LineStyle='--';
+set(gca,'xlim',[-1 1]*0.35,'ylim',[-1 1]*0.35);
+xlabel('W_L'); ylabel('W_R'); title('Posterior dist of weights');
+
+
+% 4) PLOT CURVES
+fit_mech.data.pedestal = min(fit_mech.data.contrastLeft, fit_mech.data.contrastRight);
+fit_mech.data.cDiff = fit_mech.data.contrastRight - fit_mech.data.contrastLeft;
+[counts,~,~,labels] = crosstab(fit_mech.data.pedestal,...
+    fit_mech.data.cDiff,...
+    fit_mech.data.choice,...
+    fit_mech.data.sessionID);
+prob = counts./sum(counts,3);%Convert to probability over choices
+prob = nanmean(prob,4);
+cdU = unique(fit_mech.data.cDiff);
+
+colours = [ 0    0.4470    0.7410;
+    0.8500    0.3250    0.0980;
+    0.4940    0.1840    0.5560];
+
+
+%Plot simulated model fit
+CL = [linspace(1,0,200), zeros(1,200)];
+CR = [zeros(1,200), linspace(0,1,200)];
+
+%Interpolate the ephys data to get the firing rate for each of the contrast
+%values
+F=[];
+F(1,:) = interp2(fr.ucl, fr.ucr, vis, CL , CR, 'linear' );
+F(2,:) = interp2(fr.ucl, fr.ucr, vis', CL , CR, 'linear' );
+F(3,:) = interp2(fr.ucl, fr.ucr, m2, CL , CR, 'linear' );
+F(4,:) = interp2(fr.ucl, fr.ucr, m2', CL , CR, 'linear' );
+F(5,:) = interp2(fr.ucl, fr.ucr, m2, CL , CR, 'linear' ); %M1 uses M2 firing
+F(6,:) = interp2(fr.ucl, fr.ucr, m2', CL , CR, 'linear' );
+
+NL_ph=bplot.MECH_SYMETRICAL_6SITE(fit_mech.posterior.w, F);
+mean_ph = mean(NL_ph,1);
+q_ph = quantile(NL_ph,[0.025 0.975],1);
+
+figure('color','w');
+ha = tight_subplot(1,3,0.01,0.01,0.1);
+for r = 1:3
+    hold( ha( r ), 'on');
+    plot(ha( r ), CR-CL, mean_ph(1,:,r) , 'k-');
+    fx=fill( ha( r ), [CR-CL fliplr(CR-CL)],[q_ph(1,:,r) fliplr(q_ph(2,:,r))],'k'); fx.FaceAlpha=0.2; fx.EdgeAlpha=0;
+    
+    plot( ha( r ), cdU, prob(1,:,r), 'k.','markersize',10);
+end
+set(ha,'ylim',[0 1],'dataaspectratio',[1 1 1]);
+set(ha(1),'XTickLabelMode','auto','YTickLabelMode','auto')
+xlabel(ha(1),'Contrast'); ylabel(ha(1),'Probability of choice');
 
 %% Plot model log2 likelihood for each contrast condition
 
