@@ -514,7 +514,7 @@ for mouse =1:length(names)
     save(pxFile,'mask_xy','-append');
 end
 
-%% Compute Decoding Maps at extracted coordinates 
+%% Extract activity at grid, compute aligned activity, and compute decodings
 clearvars -except sessionList
 window_stim_aligned = [-0.2 0.8];
 window_move_aligned = [-0.3 0.3];
@@ -544,6 +544,7 @@ for sess = 1:height(sessionList)
     fprintf('Session %d %s\n',sess,eRef);
     decoding_file = [ './decoding/' eRef '.mat'];
     if ~exist(decoding_file,'file')
+%     if exist(decoding_file,'file')
         %     wfAlignedFile = [ './preproc/WF_aligned/' eRef '_52COORDS.h5'];
         %     if ~exist(wfAlignedFile,'file')
         
@@ -557,7 +558,7 @@ for sess = 1:height(sessionList)
         b = load(behavFile);
         stim_resp_set = [b.contrastLeft b.contrastRight b.choice];
         [stim_resp,~,stim_resp_id] = unique(stim_resp_set,'rows');
-        
+
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         %%%% Epoch-aligned fluorescence %%%%%
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -585,13 +586,14 @@ for sess = 1:height(sessionList)
         roiFile = [ './preproc/WF_ROI/' sessionList.mouseName{sess} '.mat'];
         roi = load(roiFile);
         bregma = roi.px(1);
-        
-%        
+            
         f=figure('name',eRef);
         imagesc(svd.meanImg_registered);
         
         hold on;
         bad_pixel = zeros(size(coordSet,1),1);
+        psV = permute(periStimV, [2 3 1]);
+        U_dff = permute(svd.U_dff,[3 1 2]);
         for r = 1:size(coordSet,1) %Go through each coordinate
             
             row = bregma.row - coordSet_pix(r,2);
@@ -600,20 +602,18 @@ for sess = 1:height(sessionList)
             %if coordinate is within the imaged region (defined by roi
             %mask)
             if inpolygon(col,row,roi.mask_xy(:,1),roi.mask_xy(:,2))
-                
                 plot(col,row,'k+');
-                thisU = squeeze(svd.U_dff(row, col, :));
                 for n = 1:numTrials
-                    ROIstim(n,r,:) = thisU'*squeeze(periStimV(n,:,:));
+                    ROIstim(n,r,:) = U_dff(:,row,col)'*psV(:,:,n);
                 end
             else
                 plot(col,row,'r+');
                 bad_pixel(r)=1; %mark coordinate as not used for this session
             end
             drawnow;
-%             waitbar(r/size(coordSet,1),h);
         end
-%         close(h);
+        
+%         save(decoding_file,'ROIstim','-append');
         
         %Now use data from those coordinates to decode various task
         %variables for this session
@@ -628,11 +628,11 @@ for sess = 1:height(sessionList)
             b.contrastLeft(b.choice==3)>0}; %SLP on NoGo trials only
         
         splitting_condition = {[b.contrastLeft b.contrastRight],...
-            b.choice,...
-            b.choice,...
+            [b.choice b.contrastRight],...
+            [b.choice b.contrastLeft],...
             b.choice,...
             [b.contrastLeft(b.choice<3,:) b.contrastRight(b.choice<3,:)],...
-            b.choice(b.choice==3)};
+            [b.choice(b.choice==3) b.contrastRight(b.choice==3)]};
         
         
         for p = 1:6
@@ -664,7 +664,8 @@ for sess = 1:height(sessionList)
                             else
                                 activity = ROIstim(:,coord,t);
                             end
-                            decoding_probability(coord,t,p) = choiceProbShuf(activity, dec, trial_condition, shufLabels);
+                            cpSummary = choiceProbShuf(activity, dec, trial_condition, shufLabels);
+                            decoding_probability(coord,t,p) = cpSummary(1);
                         end
                     end
                 end
@@ -673,7 +674,7 @@ for sess = 1:height(sessionList)
             end
         end
         
-        save(decoding_file, 'decoding_probability','coordSet','stimT','labels');
+        save(decoding_file, 'ROIstim','decoding_probability','coordSet','stimT','labels','-v7.3');
         set(f,'Units','Inches','renderer','painters');
         pos = get(f,'Position');
         set(f,'PaperPositionMode','Auto','PaperUnits','Inches','PaperSize',[pos(3), pos(4)])
@@ -685,10 +686,14 @@ for sess = 1:height(sessionList)
 
 end
 close(h);
-%% Plot decoding maps
+%% Plot activity + decoding maps
 load('ctxOutlines.mat','coords');
-load('./decoding/2016-11-29_1_Chain.mat','coordSet','stimT','labels');
-decoding_probability_all = nan(size(coordSet,1),length(stimT),6,height(sessionList)); 
+load('./decoding/2016-11-29_1_Chain.mat','coordSet','stimT','labels');labels{end}='stimL NG';
+activity_maps = nan(size(coordSet,1),length(stimT),7,height(sessionList)); 
+decoding_maps = nan(size(coordSet,1),length(stimT),6,height(sessionList)); 
+% decoding_probability_all = nan(size(coordSet,1),length(stimT),6,height(sessionList)); 
+% allBehav=struct;
+% ROIstimavg = nan(size(coordSet,1),length(stimT),7,height(sessionList));
 for sess = 1:height(sessionList)
     
     eRef = sessionList.expRef{sess};
@@ -697,124 +702,366 @@ for sess = 1:height(sessionList)
     %LOAD decoding results here....
     decoding_file = [ './decoding/' eRef '.mat'];
     s=load(decoding_file);
-    decoding_probability_all(:,:,:,sess) = s.decoding_probability;
+    decoding_maps(:,:,:,sess) =  s.decoding_probability;
+    
+    %Load activity and compute avgs split by conditions
+    behavFile = [ './preproc/BEHAV_RT_Corrected/' eRef '.mat'];
+    b = load(behavFile);
+    
+    %remove pre-stim activity
+    s.ROIstim = s.ROIstim - nanmean(s.ROIstim(:,:,stimT<=0),3);
+    
+    %Within each CL,CR,Choice combination, compute averages for this
+    %session
+    [trial_conds,~,C] = unique([b.contrastLeft, b.contrastRight, b.choice],'rows');
+    condition_avg = nan(size(trial_conds,1),size(s.ROIstim,2),size(s.ROIstim,3));
+    for cond = 1:size(trial_conds,1)
+    	condition_avg(cond,:,:) = nanmean(s.ROIstim(b.contrastLeft==trial_conds(cond,1) & b.contrastRight==trial_conds(cond,2) & b.choice==trial_conds(cond,3),:,:),1);
+    end
+
+    CL = trial_conds(:,1);
+    CR = trial_conds(:,2);
+    R = trial_conds(:,3);
+    idx = { CL>0 & CR==0 & R<3; %CL Go
+            CL>0 & CR==0 & R==3; %CL NoGo
+            CL==0 & CR==0 & R<3; %C0 Go
+            CL==0 & CR==0 & R==3; %C0 NoGo
+            CL>0 & CR==CL & R==1; %CL=CR Left
+            CL>0 & CR==CL & R==2; %CL=CR Right
+            CL>0 & CR==CL & R==3}; %CL=CR NoGo
+    
+    %get trial averages for this session
+    for i = 1:length(idx)
+        activity_maps(:,:,i,sess) = nanmean(condition_avg(idx{i},:,:),1);
+    end
 end
 
-%Average decoding results across sessions...
-areaCols = [      0    0.4470    0.7410; %blue
-    0.3010    0.7450    0.9330; %lightblue
-    0.4660    0.6740    0.1880; %green
-    0.8500    0.3250    0.0980; %orange
-    0.4940    0.1840    0.5560; %purple
-    0.8 0.8 0.8]; %grey
-t_slices = [0 0.1 0.15 0.3];
-for p = 1:length(labels)
-    avg =nanmean(decoding_probability_all(:,:,p,:),4);
-    f=figure('position', [79 723 1690 273],'name',labels{p});
-%     subplot(1,1+length(t_slices),1); 
-%     plot(stimT,avg,'k-'); hold on;
+activity_maps_avg = nanmean(activity_maps,4);
+decoding_maps_avg = nanmean(decoding_maps,4);
 
-%     plot(ROI52stimT,avg([2:4 6:8 10:12 28:30 32:34 36:38],:),'-','Color',areaCols(1,:)); %VIS
-%     plot(ROI52stimT,avg([17 21 24:26 43 47 50:52],:),'-','Color',areaCols(3,:)); %M2
-%     plot(ROI52stimT,avg([22 23 48 49],:),'-','Color',areaCols(4,:)); %M1
-%     plot(ROI52stimT,avg([14:16 18:20 40:42 44:46],:),'-','Color',areaCols(4,:)); %S1
-%     text(-0.1,0.4,'VIS','color',areaCols(1,:));
-%     text(0,0.4,'M2','color',areaCols(3,:));
-%      text(0.1,0.4,'M1','color',areaCols(4,:));
-%      text(0.2,0.4,'S1','color',areaCols(5,:));
-%     ylabel(labels{p});
-%     xlim([stimT(1) stimT(end)]);
+
+% Plot mega map of activity over time
+t_slices = [0 0.1 0.125 0.15 0.2 0.3];
+f=figure('position',[202 32 1442 964]);
+ha = tight_subplot(size(activity_maps_avg,3),length(t_slices)); for a = 1:length(ha); hold(ha(a),'on'); end;
+set(ha,'xtick','','ytick','','dataaspectratio',[1 1 1],'xlim',[-1 1]*5,'ylim',[-5.2 4]);
+labels_1 = {'CL Go','CL NoGo','C0 Go','C0 NoGo','CL=CR Left','CL=CR Right','CL=CR NoGo'};
+c_range=quantile(activity_maps_avg(:),0.975);
+for t = 1:length(t_slices)
+    time_idx = find(stimT>t_slices(t),1,'first');
     
-    for t = 1:length(t_slices)
-        time_idx = find(stimT>t_slices(t),1,'first');
-
-%         subplot(1,1+length(t_slices),1);
-%         line([1 1]*t_slices(t),get(gca,'ylim'))
-%         
-        subplot(1,length(t_slices),t); hold on;
-        h=scatter(coordSet(:,1),coordSet(:,2),200,'k','o','filled');
-        h.MarkerEdgeColor=[1 1 1]*0.75;
-        h.CData = avg(:, time_idx);
-        set(gca,'xtick','','ytick','','dataaspectratio',[1 1 1],'xlim',[-1 1]*5);
-        colormap(BlueWhiteRed); colorbar;
-          caxis(0.5 + [-1 1]*0.4);
-        title(t_slices(t));
+    for i = 1:size(activity_maps_avg,3)
+        h=scatter(ha(length(t_slices)*(i-1)+t),coordSet(:,1),coordSet(:,2),200,'k','o','filled');
+        h.CData = activity_maps_avg(:, time_idx,i);
+        h.SizeData=5;
+        colormap(ha(length(t_slices)*(i-1)+t),BlueWhiteRed);
         
-
+%         if i < 7
+%             caxis(ha(length(t_slices)*(i-1)+t),0.5 + [-1 1]*0.4);
+%         else
+            caxis(ha(length(t_slices)*(i-1)+t),[-1 1]*c_range);
+%         end
+        
+        if t == length(t_slices)
+            colorbar(ha(length(t_slices)*(i-1)+t));
+        end
+        
+        if t == 1
+            ylabel(ha(length(t_slices)*(i-1)+t),labels_1{i});
+        end
         
         %Ttest across all sessions combines (dumb method)
         %add significance for whether probability is different from 0.5 
-        [~,pval] = ttest( permute(decoding_probability_all(:,time_idx,p,:),[4 1 2 3]) ,0.5,'tail','both');
+        [~,pval] = ttest( permute(activity_maps(:,time_idx,i,:),[4 1 2 3]),0,'tail','both');
         h.SizeData = ones(length(pval),1);
-        h.SizeData(pval'>0.05)=10;
-        h.SizeData(pval'<0.05)=50;
-        h.SizeData(pval'<0.01)=100;
-        h.SizeData(pval'<0.001)=150;
-        h.SizeData = h.SizeData/20;
-        h.MarkerEdgeAlpha=0.1;
-        
-        %Nested anova allowing for session and subject hierarchy   
-        %ACTUALLY: can't do that because I have only one observation for
-        %each session/subject level
-%         dp = permute(decoding_probability_all(:,time_idx,p,:),[4 1 2 3]); %sess x coords
-%         dp = dp-0.5; %testing against 0
-%         [~,~,subjectID]=unique(sessionList.mouseName);
-%         sessionID = nan(height(sessionList),1);
-%         for subj = 1:max(subjectID)
-%             sessionID(subjectID==subj)=1:sum(subjectID==subj);
-%         end
-%         for coord = 1:size(decoding_probability_all,1)
-%             goodIdx = ~isnan(dp(:,coord));
-%             p=anovan( dp(goodIdx,coord), [sessionID(goodIdx) subjectID(goodIdx)], 'nested', [0 1;0 0],'varnames',{'sessionID' 'subjectID'})
-%             
-%         end
+%         h.SizeData(pval'>0.05)=1;
+%         h.SizeData(pval'<0.05)=1;
+%         h.SizeData(pval'<0.01)=5;
+        h.SizeData(pval'<0.001)=5;
+%         h.MarkerEdgeAlpha=0.1;
         
         keepCoords = zeros(size(coordSet,1),1);
-        %add contours
         for q = 1:numel(coords) % coords is from ctxOutlines.mat
             cx = coords(q).x/100 - 5.7;
             cy = coords(q).y/100 - 5.4;
-            hxx=plot(cx,-cy, 'LineWidth', 0.5, 'Color', [1 1 1]*0.8, 'Tag', 'outline');
+            hxx=plot(ha(length(t_slices)*(i-1)+t),cx,-cy, 'LineWidth', 0.5, 'Color', [1 1 1]*0.8, 'Tag', 'outline');
             
             %mark coordinates within these bounds
             boundaryIdx=boundary(cx,-cy);
             keepCoords(inpolygon(h.XData,h.YData,cx(boundaryIdx),-cy(boundaryIdx)))=1;
         end
-        %remove datapoints outside contours;
         h.SizeData(~keepCoords)=NaN;
         
-        ylabel(labels{p});
+        if i == 1
+            title(ha(length(t_slices)*(i-1)+t),t_slices(t));
+        end
     end
-    
-    %save fig as pdf
-    set(f,'Units','Inches','renderer','painters');
-    pos = get(f,'Position');
-    set(f,'PaperPositionMode','Auto','PaperUnits','Inches','PaperSize',[pos(3), pos(4)])
-    print(f,    fullfile('C:\Users\Peter\OneDrive - University College London\Zatka-Haas et al\working\new_analyses\widefield_decoding',[labels{p} '.pdf']),'-dpdf','-r0')
+end
+set(f,'Units','Inches','renderer','painters');
+pos = get(f,'Position');
+set(f,'PaperPositionMode','Auto','PaperUnits','Inches','PaperSize',[pos(3), pos(4)])
+print(f,    fullfile('C:\Users\Peter\OneDrive - University College London\Zatka-Haas et al\working\new_analyses\widefield_decoding','activity.pdf'),'-dpdf','-r0')
 
+
+
+
+% Plot mega map of decoding over time
+t_slices = [0 0.1 0.125 0.15 0.2 0.3];
+f=figure('position',[202 32 1557 964]);
+ha = tight_subplot(size(decoding_maps_avg,3),length(t_slices)); for a = 1:length(ha); hold(ha(a),'on'); end;
+set(ha,'xtick','','ytick','','dataaspectratio',[1 1 1],'xlim',[-1 1]*5,'ylim',[-5.2 4]);
+for t = 1:length(t_slices)
+    time_idx = find(stimT>t_slices(t),1,'first');
+    
+    for i = 1:size(decoding_maps_avg,3)
+        h=scatter(ha(length(t_slices)*(i-1)+t),coordSet(:,1),coordSet(:,2),200,'k','o','filled');
+        h.CData = decoding_maps_avg(:, time_idx,i);
+        h.SizeData=5;
+        colormap(ha(length(t_slices)*(i-1)+t),BlueWhiteRed*0.9);
+        caxis(ha(length(t_slices)*(i-1)+t),0.5 + [-1 1]*0.25);
+
+        if t == length(t_slices)
+            colorbar(ha(length(t_slices)*(i-1)+t));
+        end
+        
+        if t == 1
+            ylabel(ha(length(t_slices)*(i-1)+t),labels{i});
+        end
+        
+        %Ttest across all sessions combines (dumb method)
+        %add significance for whether probability is different from 0.5 
+        [~,pval] = ttest( permute(decoding_maps(:,time_idx,i,:),[4 1 2 3]),0.5,'tail','both');
+        h.SizeData = ones(length(pval),1);
+%         h.SizeData(pval'>0.05)=1;
+%         h.SizeData(pval'<0.05)=1;
+%         h.SizeData(pval'<0.01)=5;
+        h.SizeData(pval'<0.001)=5;
+%         h.MarkerEdgeAlpha=0.1;
+        
+        keepCoords = zeros(size(coordSet,1),1);
+        for q = 1:numel(coords) % coords is from ctxOutlines.mat
+            cx = coords(q).x/100 - 5.7;
+            cy = coords(q).y/100 - 5.4;
+            hxx=plot(ha(length(t_slices)*(i-1)+t),cx,-cy, 'LineWidth', 0.5, 'Color', [1 1 1]*0.8, 'Tag', 'outline');
+            
+            %mark coordinates within these bounds
+            boundaryIdx=boundary(cx,-cy);
+            keepCoords(inpolygon(h.XData,h.YData,cx(boundaryIdx),-cy(boundaryIdx)))=1;
+        end
+        h.SizeData(~keepCoords)=NaN;
+        
+        if i == 1
+            title(ha(length(t_slices)*(i-1)+t),t_slices(t));
+        end
+    end
+end
+% % %try new colourscheme
+% cm = [linspace(0.251,1,100)', linspace(0,1,100)', linspace(0.2941,1,100)';
+%           linspace(1,0,100)', linspace(1,0.2667,100)', linspace(1,0.1059,100)'];
+% for i = 1:length(ha);colormap(ha(i),flipud(cm)*0.9);end;
+set(f,'Units','Inches','renderer','painters');
+pos = get(f,'Position');
+set(f,'PaperPositionMode','Auto','PaperUnits','Inches','PaperSize',[pos(3), pos(4)])
+print(f, fullfile('C:\Users\Peter\OneDrive - University College London\Zatka-Haas et al\working\new_analyses\widefield_decoding','decoding.pdf'),'-dpdf','-r0')
+
+%Correlate stimulus decoding with inactivation effects
+inact = load('52coordInactMap'); %load inactivation result
+inact.hemi = sign(inact.coordSet(:,1)); %-1 Left, +1 Right
+inact.dContraversive = mean([inact.deltaProb(2, inact.hemi==-1); inact.deltaProb(1, inact.hemi==+1)],1);
+inact.dIpsiversive = mean([inact.deltaProb(1, inact.hemi==-1); inact.deltaProb(2, inact.hemi==+1)],1);
+
+radius = 0.25;
+SP_time = 0.125; 
+DP_time=0.3;
+SP_time_idx = find(stimT>SP_time,1,'first'); %Time when to extract stimulus decoding
+DPCP_time_idx = find(stimT>DP_time,1,'first'); %Time when to extract DP and CP
+
+%At each coordinate, get the decoding at a region around the coordinate
+%being inactivated
+SL = nan(52,1);
+SR = nan(52,1);
+DP = nan(52,1);
+CP = nan(52,1);
+for coord = 1:52
+    inRadius = rangesearch(coordSet,inact.coordSet(coord,:),radius);
+    SL(coord) = mean( decoding_maps_avg(inRadius{1}, SP_time_idx, 2) ); %average decoding probability among the points in the radius
+    SR(coord) = mean( decoding_maps_avg(inRadius{1}, SP_time_idx, 3) );
+    DP(coord) =  mean( decoding_maps_avg(inRadius{1}, DPCP_time_idx, 1) );
+    CP(coord) =  mean( decoding_maps_avg(inRadius{1}, DPCP_time_idx, 5) );
 end
 
+%Combine decoding for ipsi and contra stimuli
+Scontra = 0.5*( SR(inact.hemi==-1) + SL(inact.hemi==+1) );
+Sipsi = 0.5*( SL(inact.hemi==-1) + SR(inact.hemi==+1) );
 
-    % plot Fluorescence at the 52 coords to check it's working 
-%     %             %CL=high, CR=0, Left choice. Check that Right VIS is firing as
-%     %             %expected.
-%     test = squeeze(mean(ROI52stim(b.contrastLeft>0 & b.contrastRight==0 & b.choice==1,:,:),1));
+figure; 
+subplot(2,2,1); 
+plot(Scontra, inact.dContraversive,'ko'); lsline; 
+xlabel({sprintf('Contralateral stimulus decoding at %0.2f sec',SP_time),'p(Stim present on contralateral hemifield)'}); 
+ylabel({'\Delta contraversive','move contralateral to inactivated hemisphere'});
+[r,p] = corr(Scontra, inact.dContraversive');
+title(sprintf('r=%0.2f p=%0.4f',r,p));
+
+subplot(2,2,2);
+plot(Sipsi, inact.dIpsiversive,'ko'); lsline; 
+xlabel({sprintf('Ipsilateral stimulus decoding at %0.2f sec',SP_time),'p(Stim present on ipsilateral hemifield)'}); 
+ylabel({'\Delta ipsiversive','move ipsilateral to inactivated hemisphere'});
+[r,p] = corr(Sipsi, inact.dIpsiversive');
+title(sprintf('r=%0.2f p=%0.4f',r,p));
+
+subplot(2,2,3); 
+plot(Scontra, inact.dIpsiversive,'ko'); lsline; 
+xlabel({sprintf('Contralateral stimulus decoding at %0.2f sec',SP_time),'p(Stim present on contralateral hemifield)'}); 
+ylabel({'\Delta ipsiversive','move ipsilateral to inactivated hemisphere'});
+[r,p] = corr(Scontra, inact.dIpsiversive');
+title(sprintf('r=%0.2f p=%0.4f',r,p));
+
+subplot(2,2,4);
+plot(Sipsi, inact.dContraversive,'ko'); lsline; 
+xlabel({sprintf('Ipsilateral stimulus decoding at %0.2f sec',SP_time),'p(Stim present on ipsilateral hemifield)'}); 
+ylabel({'\Delta contraversive','move contralateral to inactivated hemisphere'});
+[r,p] = corr(Sipsi, inact.dContraversive');
+title(sprintf('r=%0.2f p=%0.4f',r,p));
+
+figure;
+subplot(2,1,1);
+plot(DP, inact.deltaProb(3,:),'ko'); lsline; 
+xlabel(sprintf('Go/NoGo decoding %0.2f sec',DP_time)); 
+ylabel('\Delta NoGo');
+[r,p] = corr(DP, inact.deltaProb(3,:)');
+title(sprintf('r=%0.2f p=%0.4f',r,p));
+
+subplot(2,1,2);
+plot(CP, inact.deltaProb(1,:),'ko'); lsline;
+xlabel({sprintf('Choice Probability at %0.2f sec',DP_time),'p(Left choice | Go)'}); 
+ylabel('\Delta Left');
+[r,p] = corr(CP, inact.deltaProb(1,:)');
+title(sprintf('r=%0.2f p=%0.4f',r,p));
+
+
+
+
+% %Plot trace of decoding SL vs SR
+% L_VIS = -2.4 <= coordSet(:,1) & coordSet(:,1) <= -1.8 & -4.2 <= coordSet(:,2) & coordSet(:,2) <= -2.6;
+% L_M2 = -1.2 <= coordSet(:,1) & coordSet(:,1) <= -0.6 & 1.6 <= coordSet(:,2) & coordSet(:,2) <= 2.4;
+% stimL = mean(decoding_probability_all(:,:,2,:),4);
+% stimR = mean(decoding_probability_all(:,:,3,:),4);
+
+% figure;
+% subplot(1,2,1); title('Left VISp'); hold on;
+% plot(stimT,nanmean(stimL(L_VIS,:),1),'k-',stimT,nanmean(stimR(L_VIS,:),1),'r-','linewidth',2);
+% xlabel('Time (sec)'); ylabel('Stimulus Decoding Probability'); legend('CL>0','CR>0');
+% xlim([-0.1 0.3]);
+% subplot(1,2,2); title('Left MOs'); hold on;
+% plot(stimT,nanmean(stimL(L_M2,:),1),'k-',stimT,nanmean(stimR(L_M2,:),1),'r-','linewidth',2);
+% xlabel('Time (sec)'); ylabel('Stimulus Decoding Probability'); legend('CL>0','CR>0');
+% xlim([-0.1 0.3]);
+% linkaxes(get(gcf,'children'),'xy');
+% set(gcf,'renderer','painters');
+% 
+% %Average decoding results across sessions...
+% t_slices = [0 0.1 0.125 0.15 0.2 0.3];
+% for p = 1:length(labels)
+%     avg =nanmean(decoding_probability_all(:,:,p,:),4);
+%     f=figure('position',[49 2 1847 964],'name',labels{p});
+%     ha = tight_subplot(4,length(t_slices),0.05,0.05,0.05); for i = 1:numel(ha); hold(ha(i),'on');end;
 %     
-%     times = ROI52stimT(ROI52stimT >= 0 & ROI52stimT < 0.5);
-%     times = times(1:10:end);
-%     figure('name',eRef,'position',[246 756 1387 166]);
-%     for tt = 1:length(times)
+%     
+%     for t = 1:length(t_slices)
+%         time_idx = find(stimT>t_slices(t),1,'first');
+% 
 %         
-%         subplot(1,ceil(length(times)/1),tt); hold on;
-%         
-%         h=scatter(coordSet(:,1),coordSet(:,2),50,'k','o','filled');
+% %         subplot(4,length(t_slices),t); hold on;
+%         h=scatter(ha(t),coordSet(:,1),coordSet(:,2),200,'k','o','filled');
 %         h.MarkerEdgeColor=[1 1 1]*0.75;
-%         h.CData = test(:,ROI52stimT==times(tt));
-%         caxis([0 quantile(test(:),0.95)]);
-%         set(gca,'xtick','','ytick','','xcolor','w','ycolor','w','dataaspectratio',[1 1 1]);
-%         title(times(tt));
-%         %                 addAllenCtxOutlines([0 0], [-1 0], [1 1 1]*0.5, gca);
+%         h.CData = avg(:, time_idx);
+%         set(ha(t),'xtick','','ytick','','dataaspectratio',[1 1 1],'xlim',[-1 1]*5,'ylim',[-5.2 4]);
+%         colormap(ha(t),BlueWhiteRed); colorbar(ha(t));
+%           caxis(ha(t),0.5 + [-1 1]*0.4);
+%         title(ha(t),t_slices(t));
+% 
+%         %Ttest across all sessions combines (dumb method)
+%         %add significance for whether probability is different from 0.5 
+%         [~,pval] = ttest( permute(decoding_probability_all(:,time_idx,p,:),[4 1 2 3]) ,0.5,'tail','both');
+%         h.SizeData = ones(length(pval),1);
+%         h.SizeData(pval'>0.05)=10;
+%         h.SizeData(pval'<0.05)=50;
+%         h.SizeData(pval'<0.01)=100;
+%         h.SizeData(pval'<0.001)=150;
+%         h.SizeData = h.SizeData/20;
+%         h.MarkerEdgeAlpha=0.1;
+%         
+%         keepCoords = zeros(size(coordSet,1),1);
+%         %add contours
+%         for q = 1:numel(coords) % coords is from ctxOutlines.mat
+%             cx = coords(q).x/100 - 5.7;
+%             cy = coords(q).y/100 - 5.4;
+%             hxx=plot(ha(t),cx,-cy, 'LineWidth', 0.5, 'Color', [1 1 1]*0.8, 'Tag', 'outline');
+%             
+%             %mark coordinates within these bounds
+%             boundaryIdx=boundary(cx,-cy);
+%             keepCoords(inpolygon(h.XData,h.YData,cx(boundaryIdx),-cy(boundaryIdx)))=1;
+%         end
+%         %remove datapoints outside contours;
+%         h.SizeData(~keepCoords)=NaN;
+%         ylabel(labels{p});
+%         
+%         %add dots showing regions where inactivations were made
+%         h=plot(ha(t),inact.coordSet(:,1),inact.coordSet(:,2),'x','color',[1 1 1]*0.8,'Markersize',3);
+% 
+%         
+%         %Plot correlation with inactivation map
+%        
+%         radius = 0.25;
+%         prob=nan(1,52);
+%         for i = 1:52
+%             inRadius = rangesearch(coordSet,inact.coordSet(i,:),radius);
+%             
+%             prob(i)=mean( avg(inRadius{1}, time_idx) ); %average decoding probability among the points in the radius
+%         end
+%         
+% %         plot(inact.dIpsi(inact.hemi==-1), prob(inact.hemi==-1), 'bo'); hold on;
+% %         plot(inact.dIpsi(inact.hemi==1), prob(inact.hemi==1), 'ro');lsline;
+%        
+%         %Plot delta Left
+% %         subplot(4,length(t_slices),t+length(t_slices)); hold on;
+%         plot(ha(t+length(t_slices)),inact.deltaProb(1,inact.hemi==-1), prob(inact.hemi==-1), 'bo'); hold on;
+%         plot(ha(t+length(t_slices)),inact.deltaProb(1,inact.hemi==1), prob(inact.hemi==1), 'ro');lsline;
+%         xlabel(ha(t+length(t_slices)),'Inactivation \Delta LEFT (CL=CR)');
+%         ylabel(ha(t+length(t_slices)),labels{p});
+%         lsline(ha(t+length(t_slices)));
+% %         ylim([0.45 0.7]);
+%         
+%         
+%         %Plot delta Right
+%         plot(ha(t+2*length(t_slices)),inact.deltaProb(2,inact.hemi==-1), prob(inact.hemi==-1), 'bo'); hold on;
+%         plot(ha(t+2*length(t_slices)),inact.deltaProb(2,inact.hemi==1), prob(inact.hemi==1), 'ro');
+%         lsline(ha(t+2*length(t_slices)));
+%         xlabel(ha(t+2*length(t_slices)),'Inactivation \Delta RIGHT (CL=CR)');
+% %         ylabel(labels{p});
+% %         ylim([0.45 0.7]);
+%         
+%          %Plot delta NoGo
+%         plot(ha(t+3*length(t_slices)),inact.deltaProb(3,inact.hemi==-1), prob(inact.hemi==-1), 'bo'); hold on;
+%         plot(ha(t+3*length(t_slices)),inact.deltaProb(3,inact.hemi==1), prob(inact.hemi==1), 'ro');
+%         lsline(ha(t+3*length(t_slices)));
+%         xlabel(ha(t+3*length(t_slices)),'Inactivation \Delta NoGo (CL=CR)');
+% %         ylabel(labels{p});
+% %         ylim([0.45 0.7]);
+%                 legend(ha(t+3*length(t_slices)),'left hemisphere','right hemisphere');
+% 
 %     end
+%     
+%     ylim(ha(length(t_slices)+1:end),[0.45 0.7]);
+%     
+% %     %save fig as pdf
+%     set(f,'Units','Inches','renderer','painters');
+%     pos = get(f,'Position');
+%     set(f,'PaperPositionMode','Auto','PaperUnits','Inches','PaperSize',[pos(3), pos(4)])
+%     print(f,    fullfile('C:\Users\Peter\OneDrive - University College London\Zatka-Haas et al\working\new_analyses\widefield_decoding',[labels{p} '.pdf']),'-dpdf','-r0')
+% 
+% end
+
 
 %% 0a) Load and prepare data for ONE session
 clearvars -except sessionList
@@ -961,40 +1208,47 @@ for i = 1:length(MAPstimT)
     addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*0.5, ha(idx));
     hold(ha(idx),'on'); plot(ha(idx),bregma.col,bregma.row,'k.');
     title(ha(idx), MAPstimT(i) );
-        
-    %CL and NOGO
+    
+    %C0 and GO
     idx = numConds*(i-1) + 2;
-    im = nanmean(MAPstim(:,:,i,2:end,1,3),4).*mask;
+    im = nanmean(MAPstim(:,:,i,1,1,1:2),6).*mask; 
     imx=imagesc( ha(idx), im ); alpha(imx,mask);
     addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*0.5, ha(idx));
     hold(ha(idx),'on'); plot(ha(idx),bregma.col,bregma.row,'k.');
-
-    %CL and LEFT
-    idx = numConds*(i-1) + 3;
-    im = nanmean(MAPstim(:,:,i,2:end,1,1),4).*mask;
-    imx=imagesc( ha(idx), im ); alpha(imx,mask);
-    addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*0.5, ha(idx));
-    hold(ha(idx),'on'); plot(ha(idx),bregma.col,bregma.row,'k.');
-    
-    
-    %CL and Left - CR and Right
-    idx = numConds*(i-1) + 4;
-    im1 = nanmean(MAPstim(:,:,i,2:end,1,1),4);
-    im2 = nanmean(MAPstim(:,:,i,1,2:end,2),5);
-    im = (im1 - im2).*mask;
-    imx=imagesc( ha(idx), im ); alpha(imx,mask);
-    addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*0.5, ha(idx));
-    hold(ha(idx),'on'); plot(ha(idx),bregma.col,bregma.row,'k.');
-    
-    
-    % CL and NOGO - %CR and NOGO
-    idx = numConds*(i-1) + 5;
-    im1 = nanmean(MAPstim(:,:,i,2:end,1,3),4);
-    im2 = nanmean(MAPstim(:,:,i,1,2:end,3),5);
-    im = (im1 - im2).*mask;
-    imx=imagesc( ha(idx), im ); alpha(imx,mask);
-    addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*0.5, ha(idx));
-    hold(ha(idx),'on'); plot(ha(idx),bregma.col,bregma.row,'k.');
+        
+%     %CL and NOGO
+%     idx = numConds*(i-1) + 2;
+%     im = nanmean(MAPstim(:,:,i,2:end,1,3),4).*mask;
+%     imx=imagesc( ha(idx), im ); alpha(imx,mask);
+%     addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*0.5, ha(idx));
+%     hold(ha(idx),'on'); plot(ha(idx),bregma.col,bregma.row,'k.');
+% 
+%     %CL and LEFT
+%     idx = numConds*(i-1) + 3;
+%     im = nanmean(MAPstim(:,:,i,2:end,1,1),4).*mask;
+%     imx=imagesc( ha(idx), im ); alpha(imx,mask);
+%     addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*0.5, ha(idx));
+%     hold(ha(idx),'on'); plot(ha(idx),bregma.col,bregma.row,'k.');
+%     
+%     
+%     %CL and Left - CR and Right
+%     idx = numConds*(i-1) + 4;
+%     im1 = nanmean(MAPstim(:,:,i,2:end,1,1),4);
+%     im2 = nanmean(MAPstim(:,:,i,1,2:end,2),5);
+%     im = (im1 - im2).*mask;
+%     imx=imagesc( ha(idx), im ); alpha(imx,mask);
+%     addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*0.5, ha(idx));
+%     hold(ha(idx),'on'); plot(ha(idx),bregma.col,bregma.row,'k.');
+%     
+%     
+%     % CL and NOGO - %CR and NOGO
+%     idx = numConds*(i-1) + 5;
+%     im1 = nanmean(MAPstim(:,:,i,2:end,1,3),4);
+%     im2 = nanmean(MAPstim(:,:,i,1,2:end,3),5);
+%     im = (im1 - im2).*mask;
+%     imx=imagesc( ha(idx), im ); alpha(imx,mask);
+%     addAllenCtxOutlines([bregma.row bregma.col], [bregma.row-1 bregma.col], [1 1 1]*0.5, ha(idx));
+%     hold(ha(idx),'on'); plot(ha(idx),bregma.col,bregma.row,'k.');
 
 end
 colormap(BlueWhiteRed(100,1));

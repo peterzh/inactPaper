@@ -1,5 +1,5 @@
 %% Calculate wheel velocity and wheel stats (peak vel, etc)
-regions = {'LeftVIS','RightVIS','LeftM2','RightM2','LeftM1','RightM1'};
+regions = {'LeftVIS','RightVIS','LeftM2','RightM2','LeftM1','RightM1','LeftS1','RightS1'};
 % regions = {'LeftVIS','RightVIS','LeftM2','RightM2','LeftS1','RightS1'};
 
 %smooth wheel position
@@ -799,7 +799,7 @@ for loc = 1:length(regions)
 end
 linkaxes(get(gcf,'children'),'xy');
 
-%% Testing whether laser has significant effect on wheel peak velocity
+%% USED IN PAPER: Testing whether laser has significant effect on wheel peak velocity
 %Contrast-matched
 
 [contrastCondSet,~,D.contrastCond] = unique(D.stimulus,'rows');
@@ -838,7 +838,7 @@ for loc = 1:length(regions)
             %Plot avg wheel
             hold(ha((loc-1)*max(D.subjectID) + subj),'on');
             plot(ha((loc-1)*max(D.subjectID) + subj), t, mean(E.vel(E.laserType==0,:),1), 'k-');
-           plot(ha((loc-1)*max(D.subjectID) + subj), t, mean(E.vel(E.laserType==1,:),1), 'r-');
+            plot(ha((loc-1)*max(D.subjectID) + subj), t, mean(E.vel(E.laserType==1,:),1), 'r-');
             
            if loc==1
                title(ha((loc-1)*max(D.subjectID) + subj), sprintf('SUBJ %d', subj));
@@ -867,7 +867,7 @@ avg = nanmean(peakvelchange,3);
 figure;
 [h1,h2]=barwitherr(err,avg); hold on;
 set(h2,'CapSize',0,'Linewidth',2)
-set(gca,'xtick',1:6,'xticklabel',regions);
+set(gca,'xtick',1:length(regions),'xticklabel',regions);
 legend('Left choice','Right choice');
 ylabel('contrast-matched change in peak velocity (mm/s)');
 
@@ -885,8 +885,98 @@ for loc = 1:length(regions)
     end
 end
 
+%% Anova on wheel velocity effect
+regions = {'LeftVIS','RightVIS','LeftM2','RightM2','LeftM1','RightM1','LeftS1','RightS1'};
+choices = {'Left','Right'};
+[contrastCondSet,~,D.contrastCond] = unique(D.stimulus,'rows');
+D.laserType = logical(D.laserType);
 
-%% Get single trial examples (multi-power expt)
+peakvelchange = nan(length(regions),2,max(D.subjectID),max(D.contrastCond));
+numTrials = zeros(size(peakvelchange));
+
+laser_coeff = nan(length(regions),2);
+laser_coeff_pval = nan(length(regions),2);
+num_tests = 0;
+for loc = 1:length(regions)
+    for r = 1:2
+    	E = getrow(D, D.response == r & (D.laserType==0 | D.laserRegion==regions{loc}) );
+        [P,T,STATS,TERMS] = anovan( E.peakVel, [E.stimulus(:,1) E.stimulus(:,2) E.sessionID E.subjectID E.laserType], 'nested',...
+                            [0 0 0 0 0;0 0 0 0 0;0 0 0 1 0;0 0 0 0 0;0 0 0 0 0],'varnames',{'CL','CR','sessionID' 'subjectID', 'laser'},...
+                            'display','off','continuous',[1 2]);
+                               
+        laser_coeff(loc,r) = STATS.coeffs(end) - STATS.coeffs(end-1);
+        laser_coeff_pval(loc,r) = P(end);
+        
+        num_tests = num_tests+1;
+    end
+end
+
+figure;
+bx=bar(laser_coeff); hold on;
+
+for loc =  1:length(regions)
+    for r = 1:2
+        sig = laser_coeff_pval(loc,r);
+%         if sig<0.001
+%             txt='***';
+%         elseif sig<0.01
+%            txt='**'; 
+%         elseif sig<0.05
+%             txt='*';
+%         else
+%             txt='ns';
+%         end
+%         tx=text(loc+(r-1.5)/3,11, laser_coeff_pval(loc,r),txt,'HorizontalAlignment','center');
+%         
+        %corrected for multiple comparisons
+        if sig< 0.001/num_tests
+            txt='***';
+        elseif sig<0.01/num_tests
+           txt='**'; 
+        elseif sig<0.05/num_tests
+            txt='*';
+        else
+            txt='ns';
+        end
+        tx=text(loc+(r-1.5)/3,10, laser_coeff_pval(loc,r),txt,'HorizontalAlignment','center');
+        
+    end
+end
+set(gca,'xtick',1:length(regions),'xticklabel',regions);
+ylabel('Main effect of laser (coefficient) on wheel peak vel');
+legend('Left choice','Right choice');
+
+% Try model which compares Left and Right hemi inactivation
+
+%Try a model which includes choices and looks at the interaction between
+%choice and inactivation hemisphere
+regions = {'VIS','M2','M1','S1'};
+for loc = 1:length(regions)
+    	E = getrow(D, D.response<3 & contains(string(D.laserRegion),regions{loc} ));
+        E.laserHemisphere = contains(string(E.laserRegion),'Left') + 2*contains(string(E.laserRegion),'Right');
+[P,T,STATS,TERMS] = anovan( E.peakVel, [E.stimulus(:,1) E.stimulus(:,2) E.sessionID E.subjectID E.response E.laserHemisphere], 'nested',...
+                            [0 0 0 0 0 0;...
+                             0 0 0 0 0 0;...
+                             0 0 0 1 0 0;...
+                             0 0 0 0 0 0;...
+                             0 0 0 0 0 0;...
+                             0 0 0 0 0 0],...
+                            'varnames',{'CL','CR','sessionID' 'subjectID', 'choice','laserHemisphere'},...
+                            'display','off','continuous',[1 2],'model','interaction');
+      sig = P(end);
+        if sig<0.001
+            txt='***';
+        elseif sig<0.01
+           txt='**'; 
+        elseif sig<0.05
+            txt='*';
+        else
+            txt='ns';
+        end                  
+    fprintf('%s: interaction(choice,hemisphere) p=%0.2f %s \n',regions{loc},sig,txt);
+end
+
+%% USED IN PAPER: Get single trial examples (multi-power expt)
 close all;
 
 t = D.wheel_stimulusOn_timesteps(1,:);
