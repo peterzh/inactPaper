@@ -1,9 +1,9 @@
 clear all; close all;
-load('../data/Inactivation_HigherPower.mat','D');
+load('../data/inactivation/Inactivation_HigherPower.mat','D');
 
 %% Fit psychometric model to HigherPowerInact sessions
 perturbationRegion = {'LeftVIS','RightVIS','LeftM2','RightM2'};
-D1 = getrow(D, any(D.laserRegion == perturbationRegion,2) | D.laserType==0);
+D1 = structfun(@(f) f(any(D.laserRegion == perturbationRegion,2) | D.laserType==0,:), D, 'uni', 0);
 
 dat = struct('contrastLeft', D1.stimulus(:,1),...
               'contrastRight', D1.stimulus(:,2),...
@@ -15,8 +15,8 @@ for p = 1:length(perturbationRegion)
     dat.perturbation(D1.laserRegion == perturbationRegion{p}) = p;
 end
 
-% fit = bfit.fitModel('Two-Level-Perturbation',dat); %Fitting code
-fit = load("C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\tp150f8a73_eced_43f6_84c7_a5f338f2282c.mat"); %Load saved fit
+% fit = fitModel('Two-Level-Perturbation',dat); %Fitting code
+fit = load('../data/modelFits/fit_psych_model_with_inactivations.mat'); %Load saved fit
 
 %% Plot the psychometric curves for the non-laser trials only
 colours = [ 0    0.4470    0.7410;
@@ -154,3 +154,5 @@ plot(ha(4),CLs(CLs>0),mean(cat(2,prob_ave(2:end,1,3),prob_ave(1,2:end,3)'),2),'.
 
 set(ha(4),'xlim',[0 0.65],'ylim',[0 1],'TickDir','out','dataaspectratio',[1 1 1],...
     'xticklabelmode','auto','xtick', CLs);
+
+fig2Pdf(f, '../figures/Fig1.pdf');
