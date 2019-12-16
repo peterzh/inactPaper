@@ -15,8 +15,8 @@ for p = 1:length(perturbationRegion)
     dat.perturbation(D1.laserRegion == perturbationRegion{p}) = p;
 end
 
-fit = bfit.fitModel('Two-Level-Perturbation',dat);
-fit = load("C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\Two-level_removed_pre_stim_movement_trials.mat");
+% fit = bfit.fitModel('Two-Level-Perturbation',dat);
+% fit = load("C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\Two-level_removed_pre_stim_movement_trials.mat");
 fit = load("C:\Users\Peter\Documents\MATLAB\stan2AFC\fits\tp150f8a73_eced_43f6_84c7_a5f338f2282c.mat");
 %% Plot the psychometric curves for the non-laser trials only
 colours = [ 0    0.4470    0.7410;
