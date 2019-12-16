@@ -3,7 +3,7 @@ load('../data/inactivation/Inactivation_HigherPower.mat','D');
 
 %% Fit psychometric model to HigherPowerInact sessions
 perturbationRegion = {'LeftVIS','RightVIS','LeftM2','RightM2'};
-D1 = structfun(@(f) f(any(D.laserRegion == perturbationRegion,2) | D.laserType==0,:), D, 'uni', 0);
+D1 = D(any(D.laserRegion == perturbationRegion,2) | D.laserType==0,:);
 
 dat = struct('contrastLeft', D1.stimulus(:,1),...
               'contrastRight', D1.stimulus(:,2),...
