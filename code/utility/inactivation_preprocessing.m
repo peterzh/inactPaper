@@ -59,8 +59,13 @@ for i = 1:size(coordSet,1)
     D.laserIdx(id) = i;
 end
 
+wheel_stimulusOn_timesteps = D.wheel_stimulusOn_timesteps(1,:);
+D.wheel_stimulusOn_timesteps = [];
+D.wheel_startMove_timesteps=[];
+D.wheel_startMove=[];
+
 %Save the data
-save('../data/inactivation/Inactivation_52Coord.mat','D','-v7.3');
+save('../data/inactivation/Inactivation_52Coord.mat','D','wheel_stimulusOn_timesteps','-v7.3');
 
 %% Pulse inactivation dataaset
 clear all;
@@ -124,8 +129,13 @@ end
 fprintf('Removing %0.2f%% of trials becuase of pre-stim wheel movements\n',100*mean(keepIdx==0));
 D = D(keepIdx==1,:);
 
+wheel_stimulusOn_timesteps = D.wheel_stimulusOn_timesteps(1,:);
+D.wheel_stimulusOn_timesteps = [];
+D.wheel_startMove_timesteps=[];
+D.wheel_startMove=[];
+
 %Save the data 
-save('../data/inactivation/Inactivation_Pulse.mat','D','-v7.3');
+save('../data/inactivation/Inactivation_Pulse.mat','D','wheel_stimulusOn_timesteps','-v7.3');
 
 %% Higher power inactivation dataset
 clear all;
@@ -183,5 +193,10 @@ end
 fprintf('Removing %0.2f%% of trials becuase of pre-stim wheel movements\n',100*mean(keepIdx==0));
 D = D(keepIdx==1,:);
 
+wheel_stimulusOn_timesteps = D.wheel_stimulusOn_timesteps(1,:);
+D.wheel_stimulusOn_timesteps = [];
+D.wheel_startMove_timesteps=[];
+D.wheel_startMove=[];
+
 %Save the data 
-save('../data/inactivation/Inactivation_HigherPower.mat','D','-v7.3');
+save('../data/inactivation/Inactivation_HigherPower.mat','D','wheel_stimulusOn_timesteps','-v7.3');
