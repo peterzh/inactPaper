@@ -134,6 +134,9 @@ fx=fill(ha(4), [CL(CL>0) fliplr(CL(CL>0))],[q_pCorrect(1,:) fliplr(q_pCorrect(2,
 fx.FaceColor=[1 1 1]*0;
 plot(ha(4),CLs(CLs>0),mean(cat(2,prob_ave(2:end,1,1),prob_ave(1,2:end,2)'),2),'.','color',[1 1 1]*0,'markersize',30);
 
+z = squeeze(0.5*(mean(prob(2:end,1,1,:,1),1) + mean(prob(1,2:end,2,:,1),2)));
+fprintf('pCorrect: %0.2f +- %0.2f %%\n',100*nanmean(z),100*nanstd(z));
+
 %pIncorrectOpposite
 %(CL + R choice) & (CR + L choice)
 pICO = mean(cat(4,NL_ph(:,CL>0,2),NL_ph(:,CR>0,1)),4);
@@ -142,6 +145,9 @@ plot(ha(4),CL(CL>0),mean(pICO,1),'-','color',[1 1 1]*0.8,'linewidth',2);
 fx=fill(ha(4), [CL(CL>0) fliplr(CL(CL>0))],[q_pICO(1,:) fliplr(q_pICO(2,:))],'k'); fx.FaceAlpha=0.2; fx.EdgeAlpha=0;
 fx.FaceColor=[1 1 1]*0.8;
 plot(ha(4),CLs(CLs>0),mean(cat(2,prob_ave(2:end,1,2),prob_ave(1,2:end,1)'),2),'.','color',[1 1 1]*0.8,'markersize',30);
+
+z = squeeze(0.5*(mean(prob(2:end,1,2,:,1),1) + mean(prob(1,2:end,1,:,1),2)));
+fprintf('pIncorrect: %0.2f +- %0.2f %%\n',100*nanmean(z),100*nanstd(z));
 
 %pIncorrectNoGo
 pING = mean(cat(4,NL_ph(:,CL>0,3),NL_ph(:,CR>0,3)),4);
@@ -154,5 +160,9 @@ plot(ha(4),CLs(CLs>0),mean(cat(2,prob_ave(2:end,1,3),prob_ave(1,2:end,3)'),2),'.
 
 set(ha(4),'xlim',[0 0.65],'ylim',[0 1],'TickDir','out','dataaspectratio',[1 1 1],...
     'xticklabelmode','auto','xtick', CLs);
+
+z = squeeze(0.5*(mean(prob(2:end,1,3,:,1),1) + mean(prob(1,2:end,3,:,1),2)));
+fprintf('pMiss: %0.2f +- %0.2f %%\n',100*nanmean(z),100*nanstd(z));
+
 
 fig2Pdf(f, '../figures/Fig1.pdf');

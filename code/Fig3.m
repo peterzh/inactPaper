@@ -142,13 +142,14 @@ D.laserOnset = D.laserOnset + randn(length(D.laserOnset),1)/100000;
 [~,sortIdx]=sort(D.laserOnset);
 D = D(sortIdx,:);
 
-%Get non-laser
-NL =  D((D.CR_gt_CL | D.CL_gt_CR) & D.laserType==0, :);
-
 %Laser trials are selected so that the laser is contralateral to the side
 %with higher contrast.
 D.CL_gt_CR = D.stimulus(:,1) > D.stimulus(:,2);
 D.CR_gt_CL = D.stimulus(:,2) > D.stimulus(:,1);
+
+%Get non-laser
+NL =  D((D.CR_gt_CL | D.CL_gt_CR) & D.laserType==0, :);
+
 VIS = D((D.laserRegion == 'LeftVIS' & D.CR_gt_CL) | (D.laserRegion == 'RightVIS' & D.CL_gt_CR),: );
 M2 = D((D.laserRegion == 'LeftM2' & D.CR_gt_CL) | (D.laserRegion == 'RightM2' & D.CL_gt_CR) ,:);
 M1 = D((D.laserRegion == 'LeftM1' & D.CR_gt_CL) | (D.laserRegion == 'RightM1' & D.CL_gt_CR) ,:);
