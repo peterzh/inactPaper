@@ -15,7 +15,7 @@ for sess = 1:height(sessionList)
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     %%%%%% Load behavioural data %%%%%%%%%%%
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    [~,meta] = loadData(eRef);
+    [~,meta] = loadBehaviouralData(eRef);
     blockFile = meta.blockFile;
     tlFile = strrep(blockFile,'_Block.mat','_Timeline.mat');
     load(blockFile);
@@ -65,7 +65,7 @@ for sess = 1:height(sessionList)
     end
     
     %Add wheel trace
-    [ee,~] = loadData(eRef);
+    [ee,~] = loadBehaviouralData(eRef);
     dd.wheel_stimOn = ee.wheel_stimulusOn;
     
     %add session and subject information

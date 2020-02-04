@@ -12,7 +12,7 @@ coordSet = [coordSet; -coordSet(:,1), coordSet(:,2)];
 D = table;
 ii=1;
 for session = 1:length(expRefs)
-    [dd,meta] = loadData(expRefs{session});
+    [dd,meta] = loadBehaviouralData(expRefs{session});
 
     dd = structfun(@(x)(x(6:(end-14),:)),dd,'uni',0); %trim first 5 trials and last 15
     dd.sessionID = ones(length(dd.response),1)*ii;
@@ -77,7 +77,7 @@ mouseName = cellfun(@(e)e{3},cellfun(@(s) strsplit(s,'_'), expRefs,'uni',0),'uni
 D = table;
 ii=1;
 for session = 1:length(expRefs)
-    [dd,meta] = loadData(expRefs{session});
+    [dd,meta] = loadBehaviouralData(expRefs{session});
 
     dd = structfun(@(x)(x(6:(end-14),:)),dd,'uni',0); %trim first 5 trials and last 15
     dd.sessionID = ones(length(dd.response),1)*ii;
@@ -147,7 +147,7 @@ mouseName = cellfun(@(e)e{3},cellfun(@(s) strsplit(s,'_'), expRefs,'uni',0),'uni
 D = table;
 ii=1;
 for session = 1:length(expRefs)
-    [dd,meta] = loadData(expRefs{session});
+    [dd,meta] = loadBehaviouralData(expRefs{session});
     dd = structfun(@(x)(x(6:(end-14),:)),dd,'uni',0); %trim first 5 trials and last 15
     dd.sessionID = ones(length(dd.response),1)*ii;
     dd.subjectID = ones(length(dd.response),1)*subjID(session);

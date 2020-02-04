@@ -170,7 +170,7 @@ rt = nan(2,1000);
 rt_ci = zeros(2,1000,2);
 for t = 1:length(tsteps)
     %VIS
-    idx = WithinRanges(VIS.laserOnset, tsteps(t) + [-0.5 0.5]*window_sec);
+    idx = tsteps(t)-0.5*window_sec < VIS.laserOnset & VIS.laserOnset <= tsteps(t)+0.5*window_sec;
     [counts,~,pVal] = crosstab( [NL.feedbackType; VIS.feedbackType(idx==1)], [NL.laserType; VIS.laserType(idx==1)]);
     [perf(1,t),perf_ci(1,t,:)] = binofit(counts(2,2),sum(counts(:,2)));
     if pVal<alpha
@@ -188,7 +188,7 @@ for t = 1:length(tsteps)
     end
     
     %M2
-    idx = WithinRanges(M2.laserOnset, tsteps(t) + [-0.5 0.5]*window_sec);
+    idx = tsteps(t)-0.5*window_sec < M2.laserOnset & M2.laserOnset <= tsteps(t)+0.5*window_sec;
     [counts,~,pVal] = crosstab( [NL.feedbackType; M2.feedbackType(idx==1)], [NL.laserType; M2.laserType(idx==1)]);
     [perf(2,t),perf_ci(2,t,:)] = binofit(counts(2,2),sum(counts(:,2)));
     if pVal<alpha

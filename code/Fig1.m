@@ -15,7 +15,7 @@ for p = 1:length(perturbationRegion)
     dat.perturbation(D1.laserRegion == perturbationRegion{p}) = p;
 end
 
-% fit = fitModel('Two-Level-Perturbation',dat); %Fitting code
+% fit = stan_fitModel('Two-Level-Perturbation',dat); %Fitting code
 fit = load('../data/modelFits/fit_psych_model_with_inactivations.mat'); %Load saved fit
 
 %% Plot the psychometric curves for the non-laser trials only
@@ -84,7 +84,7 @@ end
 for cl = 1:4
     CL = ones(1,100)*CLs(cl);
     CR = linspace(0,0.54,100);
-    ph=bplot.CN(BL,SL,BR,SR,N,CL,CR);
+    ph=stan_plotFcn_CN(BL,SL,BR,SR,N,CL,CR);
     ph = permute( mean(ph,1), [2 3 1] );
     j = 1;
     for r = [1 3 2]
@@ -96,7 +96,7 @@ end
 for cr = 1:4
     CR = ones(1,100)*CRs(cr);
     CL = linspace(0,0.54,100);
-    ph=bplot.CN(BL,SL,BR,SR,N,CL,CR);
+    ph=stan_plotFcn_CN(BL,SL,BR,SR,N,CL,CR);
     ph = permute( mean(ph,1), [2 3 1] );
     j = 1;
     for r = [1 3 2]
@@ -125,7 +125,7 @@ title(ha(3),'Right');
 CL = [linspace(0.05,0.6,200), zeros(1,200)];
 CR = [zeros(1,200), linspace(0.05,0.6,200)];
 %Non-laser global fit on detection trials
-NL_ph=bplot.CN(BL,SL,BR,SR,N,CL,CR);
+NL_ph=stan_plotFcn_CN(BL,SL,BR,SR,N,CL,CR);
 
 pCorrect = mean(cat(4,NL_ph(:,CL>0,1),NL_ph(:,CR>0,2)),4);
 q_pCorrect = quantile(pCorrect,[0.025 0.975],1);
