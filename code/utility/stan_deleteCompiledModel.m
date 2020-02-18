@@ -1,4 +1,4 @@
-function deleteCompiledModel(modelName)
+function stan_deleteCompiledModel(modelName)
 models_dir = fullfile( fileparts(mfilename('fullpath')), 'stanModels');
 modelFile = fullfile(models_dir, [modelName '.stan']);
 

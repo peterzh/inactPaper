@@ -131,7 +131,7 @@ end
 
 save('../data/widefield/behaviouralData.mat','D','wheel_stimulusOn_timesteps');
 
-%% Load widefield imaging data: SVD, image alignment, downsampling
+%% Load widefield imaging data: image alignment, downsampling
 clear all; close all;
 sessionList = readtable('../data/widefield/sessionList.csv','FileType','text','Delimiter',',');
 load('../data/widefield/behaviouralData.mat','D');
@@ -139,37 +139,24 @@ load('../data/widefield/behaviouralData.mat','D');
 %Parameters 
 window_stim_aligned = [-0.2 0.8];
 window_move_aligned = [-0.3 0.3];
-num_svd_components = 500;
 
 %Grid for downsampling
-pixSize = 0.0217; % mm/pix. This is for PCO edge 5.5 with 0.6x mag (as kilotrode)
-[x1,y1]=meshgrid(-4:0.2:4, -5:0.2:3.5); x1=x1(:); y1=y1(:);
-coordSet = [x1, y1];
-coordSet_pix = round(coordSet/pixSize);
+pixSize = 0.0217; % mm/pix. Thris is for PCO edge 5.5 with 0.6x mag (as kilotrode)
+% [x1,y1]=meshgrid(-4:0.2:4, -5:0.2:3.5); x1=x1(:); y1=y1(:);
+% coordSet = [x1, y1];
+% coordSet_pix = round(coordSet/pixSize);
 
 %Extract activity for each session
 for sess = 1:height(sessionList)
-% for sess = 1:23
     eRef = sessionList.expRef{sess};
     fprintf('Session %d %s\n',sess,eRef);
     
     activityFile = [ '../data/widefield/eventAlignedActivity/' eRef '.mat'];
     if ~exist(activityFile,'file')
-        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        %%%%%% Haemodynamic correction & SVD %%%%%%%
-        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        corrPath = fullfile(sessionList.widefieldDir{sess}, 'svdTemporalComponents_corr.npy');
-        if ~exist(corrPath,'file') %Do haemodynamic correction if it doesnt exist
-            quickHemoCorrect(sessionList.widefieldDir{sess},num_svd_components);
-        end
-        [U,V,wfTime,meanImg]=quickLoadUVt(sessionList.widefieldDir{sess},num_svd_components);
+
+        %Load SVD of raw data, computed earlier
+        load([ '../data/widefield/preproc_SVD_dFF/' eRef '.mat'],'meanImg','U','V','wfTime');
         
-        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        %%%%%% Compute dF/F using mean image %%%%%%%%%%%
-        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        [U_dff, V_dff] = dffFromSVD(U, V, meanImg);
-        clear U V;
-       
         %%%%%%%
         %%% If first session for this mouse, then save meanImg as the
         %%% reference image, and select bregma to define origin of
@@ -179,23 +166,37 @@ for sess = 1:height(sessionList)
         thisMouseSessIDs = sessionList.sessionID(contains(sessionList.mouseName,thisMouse));
         meanImg = meanImg/quantile(meanImg(:),0.99);%Normalise meanImage 
         if sessionList.sessionID(sess) == min(thisMouseSessIDs) %If first session of subject
-            f=figure; imshow(meanImg);
-            bregma = round(ginput(1));
+            f=figure; imshow(meanImg); title('Select bregma');
+            bregma = round(ginput(1)); 
+            
+            %Create mask 
+            title('Draw boundary');
+            mask = drawpolygon;
+            % Set activity outside mask to NaN
+            maskImg = nan(size(U,1),size(U,2));
+            for row = 1:size(U,1)
+                for col = 1:size(U,2)
+                    if inpolygon(col,row,mask.Position(:,1),mask.Position(:,2))
+                        maskImg(row,col) = 1;
+                    end
+                end
+            end
+            U = U.*maskImg;
             
             RA = imref2d(size(meanImg),pixSize,pixSize); %Coordinates of image in mm
             RA.XWorldLimits = RA.XWorldLimits - bregma(1)*pixSize;
             RA.YWorldLimits = RA.YWorldLimits - bregma(2)*pixSize;
 
-            save(['../data/widefield/reference_image/' thisMouse],'meanImg','RA');
+            save(['../data/widefield/reference_image/' thisMouse],'meanImg','RA','maskImg');
             meanImg_registered = meanImg;
             RA_registered = RA;
-            U_dff_registered = U_dff;
+            U_registered = U;
             
         else %Otherwise, align to the first session
             %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             %%%%%% Register image to first session of the same subject %%%%%%%%%
             %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-            refImg = load(['../data/widefield/reference_image/' thisMouse], 'meanImg','RA');
+            refImg = load(['../data/widefield/reference_image/' thisMouse], 'meanImg','RA','maskImg');
             [optimizer,metric] = imregconfig('Multimodal');
             tform = imregtform(meanImg, refImg.meanImg, 'similarity' ,optimizer,metric);
             falign=figure('name',eRef);
@@ -207,9 +208,11 @@ for sess = 1:height(sessionList)
             RA_registered = refImg.RA;
             
             %Overwrite the U components with the registered version
-            U_dff_registered = imwarp(U_dff,tform,'OutputView',imref2d(size(refImg.meanImg)));
-        end
-        clear meanImg U_dff refImg;
+            U_registered = imwarp(U,tform,'OutputView',imref2d(size(refImg.meanImg)));
+            
+            %Mask
+            U_registered = U_registered.*refImg.maskImg;
+        end        
 
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         %%%%%% Align & crop image to the first mouse %%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -217,39 +220,56 @@ for sess = 1:height(sessionList)
         if ~contains(thisMouse,'Chain')
             %Align the meanImg for each mouse to the meanImg of the
             %first mouse (Hench)
-            chain = load(['../data/widefield/reference_image/chain.mat'],'meanImg','RA');
+            chain = load(['../data/widefield/reference_image/chain.mat']);
             
             %Show alongside
             figure;imshowpair(chain.meanImg,chain.RA,meanImg_registered,RA_registered);
 
-            %Crop meanImg to the size of chain's meanImg
+            %Get all world coordinates of Chain's image
+            
+            meanImg_cropped = nan(size(chain.meanImg,1),size(chain.meanImg,2));
+            for row = 1:size(chain.meanImg,1)
+                for col = 1:size(chain.meanImg,2)
+                    
+                    [chain_world_x,chain_world_y]=chain.RA.intrinsicToWorld(row,col);
+                    [this_row,this_col]=RA_registered.worldToIntrinsic(chain_world_x,chain_world_y);
+                    this_row = round(this_row); this_col=round(this_col);
+                    
+                    try
+                        meanImg_cropped(row,col) = meanImg_registered(this_row,this_col);
+                    catch
+                    end
+                end
+            end
+            %Get parts of this session's image which correspond to Chain's
+            %image world coordinates
+            
+            error('cropping does not work properly. fix');
             meanImg_cropped=imcrop(RA_registered.XWorldLimits,RA_registered.YWorldLimits,meanImg_registered,...
                 [chain.RA.XWorldLimits(1) chain.RA.YWorldLimits(1) chain.RA.ImageExtentInWorldX chain.RA.ImageExtentInWorldY]);
             
             %Crop U component
-            U_dff_cropped = nan(size(meanImg_cropped,1),size(meanImg_cropped,2), num_svd_components);
-            for i = 1:num_svd_components
-                U_dff_cropped(:,:,i) = ...
-                    imcrop(RA.XWorldLimits,RA.YWorldLimits,U_dff_registered(:,:,i),...
+            U_cropped = nan(size(meanImg_cropped,1),size(meanImg_cropped,2), size(U,3));
+            for i = 1:size(U_cropped,3)
+                U_cropped(:,:,i) = ...
+                    imcrop(RA.XWorldLimits,RA.YWorldLimits,U_registered(:,:,i),...
                     [chain.RA.XWorldLimits(1) chain.RA.YWorldLimits(1) chain.RA.ImageExtentInWorldX chain.RA.ImageExtentInWorldY]);
             end
 
         else
             meanImg_cropped = meanImg_registered;
-            U_dff_cropped = U_dff_registered;
+            U_cropped = U_registered;
         end
-        clear U_dff_registered meanImg_registered RA_registered;
         
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         %%%%%% Downsample in space %%%%%%%%%%%%%%%%
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         target_size = [50, 50]; %number of [row,col] in downsampled image
-        U_dff_downsampled = nan(target_size(1),target_size(2),num_svd_components);
-        for i = 1:num_svd_components
-            U_dff_downsampled(:,:,i) = imresize(U_dff_cropped(:,:,i), target_size,'Antialiasing',false);
+        U_downsampled = nan(target_size(1),target_size(2),size(U,3));
+        for i = 1:size(U,3)
+            U_downsampled(:,:,i) = imresize(U_cropped(:,:,i), target_size,'Antialiasing',false);
         end
         meanImg_downsampled = imresize(meanImg_cropped, target_size,'Antialiasing',false);
-        clear U_dff_cropped meanImg_cropped;
         
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         %%%%%% Filter with derivative to approximate spikes %%%%%%%%%%%%%%%%
@@ -257,13 +277,18 @@ for sess = 1:height(sessionList)
         d = designfilt('differentiatorfir','FilterOrder',50, ...
             'PassbandFrequency',8.5,'StopbandFrequency',10, ...
             'SampleRate',1/mean(diff(wfTime)));
-        dV = filter(d,V_dff')'; %*Fs;
+        dV = filter(d,V')'; %*Fs;
         delay = mean(grpdelay(d));
         wfTime_dt = wfTime(1:end-delay);
         dV(:,1:delay) = [];
         wfTime_dt(1:delay) = [];
         dV(:,1:delay) = [];
-        % fvtool(d,'MagnitudeDisplay','zero-phase','Fs',1/mean(diff(wfTime)))
+        V = dV;
+        wfTime = wfTime_dt;
+%         % fvtool(d,'MagnitudeDisplay','zero-phase','Fs',1/mean(diff(wfTime)))
+
+%         %Filter with Andy's deconvolution
+%         V=AP_deconv_wf(V);
         
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         %%%%%% Get stimulus-aligned activity%%%%%%%%%%%%%%%%%
@@ -275,13 +300,13 @@ for sess = 1:height(sessionList)
         
         assert(all(diff(b.time_stimOn)>0),'Timestamps not monotonically increasing');
         [~, stimT, periStimV, ~] = ...
-            eventLockedAvgSVD(U_dff_downsampled, dV, wfTime_dt,...
+            eventLockedAvgSVD(U_downsampled, V, wfTime,...
             b.time_stimOn, stim_resp_id, window_stim_aligned);
         
         stimAlignedActivity = nan(size(meanImg_downsampled,1), size(meanImg_downsampled,2), length(stimT), numTrials);
         psV = permute(periStimV, [2 3 1]);
         for n = 1:numTrials
-            stimAlignedActivity(:,:,:,n) = svdFrameReconstruct(U_dff_downsampled, psV(:,:,n));
+            stimAlignedActivity(:,:,:,n) = svdFrameReconstruct(U_downsampled, psV(:,:,n));
         end
         
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -322,7 +347,6 @@ for sess = 1:height(sessionList)
                                 otherwise
                                     activity = permute(stimAlignedActivity(row,col,t,:),[4 1 2 3]);
                             end
-                            
                             cpSummary = choiceProbShuf(activity, dec, trial_condition, shufLabels);
                             stimAlignedDecoding(row,col,t,p) =  cpSummary(1);
                         end
@@ -334,25 +358,10 @@ for sess = 1:height(sessionList)
         end
         
         save(activityFile,'stimT','stimAlignedActivity','stimAlignedDecoding');
-        
     end
 end
 
-%% Load and average
+%% Define ROIs for each subject
 
-decoding_all = cell(height(sessionList),1);
-for sess = 1:height(sessionList)
-    eRef = sessionList.expRef{sess};
-    fprintf('Session %d %s\n',sess,eRef);
-    
-    activityFile = [ '../data/widefield/eventAlignedActivity/' eRef '.mat'];
-    
-    a = load(activityFile);
-    
-    decoding_all{sess} = a.stimAlignedDecoding;
-    
-end
-decoding_all = cat(5,decoding_all{:});
-
-decoding_avg = nanmean(decoding_all,5);
+%% Fit neurometric model to VIS and MOs ROIs
 

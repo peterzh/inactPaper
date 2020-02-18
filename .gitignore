@@ -1,6 +1,7 @@
 paper
-*.mat
-
 *.asv
 *.h5
 *.pdf
+*.exe
+*.hpp
+*.d

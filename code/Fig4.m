@@ -31,6 +31,68 @@ xlabel('Weight onto Z_L'); ylabel('Weight onto Z_R'); title('Posterior dist of w
 
 fig2Pdf(gcf, '../figures/Fig4_weights.pdf');
 
+%% Plot fit of inactivation-neurometric model on laser off trials
+% fit_inact = load("../data/modelFits/neurometric_inact_original.mat"); %Original fit to inactivation sessions
+fit_inact = load("C:\stanFitDump\tpaeecaac5_464c_4218_b5b9_ee96a3152748.mat");
+
+fr = load("..\data\neuropixels\visMOs_allConds.mat");
+VIS_window = [0.075 0.125];
+MOS_window = [0.125 0.175];
+wf_window_delay = 0.03;
+vis_ephys = mean( mean( fr.vis(:,:,:,VIS_window(1) < fr.binsS & fr.binsS < VIS_window(2)), 4), 3);
+m2_ephys = mean( mean( fr.mos(:,:,:,MOS_window(1) < fr.binsS & fr.binsS < MOS_window(2)), 4), 3);
+
+%Calculate behavioural choice proportions
+uCL = unique(fit_inact.data.contrastLeft);
+uCR = unique(fit_inact.data.contrastRight);
+[counts,~,~,labels] = crosstab(fit_inact.data.contrastLeft,...
+    fit_inact.data.contrastRight,...
+    fit_inact.data.choice,...
+    fit_inact.data.sessionID);
+prob = counts./sum(counts,3);%Convert to probability over choices
+prob = nanmean(prob,4);
+
+
+figure; hold on;
+CL = [linspace(0.05,1,200), zeros(1,200)];
+CR = [zeros(1,200), linspace(0.05,1,200)];
+F=[];
+F(1,:) = interp2(fr.ucl, fr.ucr, vis_ephys, CL , CR, 'linear' );
+F(2,:) = interp2(fr.ucl, fr.ucr, vis_ephys', CL , CR, 'linear' );
+F(3,:) = interp2(fr.ucl, fr.ucr, m2_ephys, CL , CR, 'linear' );
+F(4,:) = interp2(fr.ucl, fr.ucr, m2_ephys', CL , CR, 'linear' );
+NL_ph=stan_plotFcn_MECH_SYMETRICAL(fit_inact.posterior.w, F);
+
+pCorrect = mean(cat(4,NL_ph(:,CL>0,1),NL_ph(:,CR>0,2)),4);
+q_pCorrect = quantile(pCorrect,[0.025 0.975],1);
+plot(CL(CL>0),mean(pCorrect,1),'-','color',[1 1 1]*0,'linewidth',2);
+fx=fill([CL(CL>0) fliplr(CL(CL>0))],[q_pCorrect(1,:) fliplr(q_pCorrect(2,:))],'k'); fx.FaceAlpha=0.2; fx.EdgeAlpha=0;
+fx.FaceColor=[1 1 1]*0;
+plot(uCL(uCL>0),mean(cat(2,prob(2:end,1,1),prob(1,2:end,2)'),2),'.','color',[1 1 1]*0,'markersize',30);
+
+%pIncorrectOpposite
+%(CL + R choice) & (CR + L choice)
+pICO = mean(cat(4,NL_ph(:,CL>0,2),NL_ph(:,CR>0,1)),4);
+q_pICO = quantile(pICO,[0.025 0.975],1);
+plot(CL(CL>0),mean(pICO,1),'-','color',[1 1 1]*0.8,'linewidth',2);
+fx=fill([CL(CL>0) fliplr(CL(CL>0))],[q_pICO(1,:) fliplr(q_pICO(2,:))],'k'); fx.FaceAlpha=0.2; fx.EdgeAlpha=0;
+fx.FaceColor=[1 1 1]*0.8;
+plot(uCL(uCL>0),mean(cat(2,prob(2:end,1,2),prob(1,2:end,1)'),2),'.','color',[1 1 1]*0.8,'markersize',30);
+
+%pIncorrectNoGo
+pING = mean(cat(4,NL_ph(:,CL>0,3),NL_ph(:,CR>0,3)),4);
+q_pING = quantile(pING,[0.025 0.975],1);
+plot(CL(CL>0),mean(pING,1),'-','color',[1 1 1]*0.4,'linewidth',2);
+fx=fill([CL(CL>0) fliplr(CL(CL>0))],[q_pING(1,:) fliplr(q_pING(2,:))],'k'); fx.FaceAlpha=0.2; fx.EdgeAlpha=0;
+fx.FaceColor=[1 1 1]*0.4;
+xlabel('Contrast (single side)');
+plot(uCL(uCL>0),mean(cat(2,prob(2:end,1,3),prob(1,2:end,3)'),2),'.','color',[1 1 1]*0.4,'markersize',30);
+
+set(gca,'xlim',[0 1],'ylim',[0 1],'TickDir','out','dataaspectratio',[1 1 1],...
+    'xticklabelmode','auto','xtick', uCL);
+
+fig2Pdf(gcf, '../figures/Fig4_laserOffFit.pdf');
+
 %% Plot prediction of inactivation for Correct, Incorrect & Miss rates
 load('../data/inactivation/Inactivation_HigherPower.mat','D');
 fit_inact = load("../data/modelFits/neurometric_inact_original.mat"); %Original fit to inactivation sessions
@@ -127,3 +189,6 @@ for r = 1:3
     fill(3*(r-1)+3 +[-0.2 0.2 0.2 -0.2],[q_ph(1,1,r) q_ph(1,1,r) q_ph(2,1,r) q_ph(2,1,r)],'k','facealpha',0.2,'facecolor',areaCols(3,:));
 end
 legend('Correct','Incorrect','Miss');
+
+fig2Pdf(gcf, '../figures/Fig4_fitAndPrediction.pdf');
+

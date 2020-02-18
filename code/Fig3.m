@@ -106,12 +106,13 @@ fig2Pdf(gcf, '../figures/Fig3_Map1.pdf');
 hemi = sign(coordSet(:,1)); %-1 Left, +1 Right
 dContra = mean([deltaProb(2, hemi==-1); deltaProb(1, hemi==+1)],1);
 dIpsi = mean([deltaProb(1, hemi==-1); deltaProb(2, hemi==+1)],1);
-labels = {'contraversive','ipsiversive'};
+dGo = -mean([deltaProb(3, hemi==-1); deltaProb(3, hemi==+1)],1);
+labels = {'contraversive','ipsiversive','go'};
 
-plotVals = [dContra dContra; dIpsi dIpsi];
-figure('color','w');
-for r = 1:2
-    subplot(1,2,r); hold on;
+plotVals = [dContra dContra; dIpsi dIpsi; dGo dGo];
+f=figure('position',[516 558 724 420]);
+for r = 1:3
+    subplot(1,3,r); hold on;
     for q = 1:numel(coords) % coords is from ctxOutlines.mat
         cx = coords(q).x/100 - 5.7;
         cy = coords(q).y/100 - 5.4;

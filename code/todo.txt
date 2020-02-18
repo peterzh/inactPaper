@@ -1,0 +1,7 @@
+Move widefield analysis into the new code format
+
+Move inactivation code (relating to fitting neurometric model) into the new code format
+
+Move wheel analysis into new code format
+
+Move neuropixels analysis into new code format

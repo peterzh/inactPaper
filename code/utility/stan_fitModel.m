@@ -38,7 +38,7 @@ end
 
 %Get posterior
 %Fit model on data
-fitObj = stan('fit',stanModelObj,'method','sample','data',data,'iter',1000,'chains',4,'verbose',true);
+fitObj = stan('fit',stanModelObj,'method','sample','data',data,'iter',1000,'chains',4,'verbose',true,'working_dir','C:\stanFitDump');
 fitObj.block;
 
 %Get all parameter values
@@ -65,7 +65,7 @@ fit.modelName = modelName;
 fit.posterior = posterior;
 fit.data = data;
 
-savePath = [tempname('C:\Users\Peter Zatka-Haas\OneDrive - University College London\Zatka-Haas_et_al_2020\data\modelFits\unsorted') '.mat'];
+savePath = [tempname('C:\stanFitDump') '.mat'];
 save(savePath,'-struct','fit','-v7.3');
 disp('Saved to:');
 disp(savePath);

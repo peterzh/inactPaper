@@ -1,4 +1,4 @@
-function sm = getCompiledModel(modelName)
+function sm = stan_getCompiledModel(modelName)
 models_dir = fullfile( fileparts(mfilename('fullpath')), 'stanModels');
 modelFile = fullfile(models_dir, [modelName '.mat']);
 
